@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marktext"
+version = "1.0.0"
+description = "Statistical watermarking and detection of LLM-generated text with Qwen2.5."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "transformers",
+    "streamlit",
+]
+
+[project.scripts]
+marktext = "main:main"
+
+[tool.setuptools]
+py-modules = ["main", "app", "engine", "detector", "config"]
