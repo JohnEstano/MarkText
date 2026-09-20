@@ -3,10 +3,11 @@
 #
 # Install with:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
-#   pip install transformers
+#   pip install transformers streamlit
 #
 # On first run, Hugging Face will download Qwen2.5-0.5B-Instruct (~500 MB)
 # into the HF cache (default: ~/.cache/huggingface/hub).
 
 torch
 transformers
+streamlit

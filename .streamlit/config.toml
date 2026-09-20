@@ -1,0 +1,7 @@
+# MarkText is a local-only demo: listen on this machine only, not the LAN.
+[server]
+address = "localhost"
+headless = true
+
+[browser]
+gatherUsageStats = false

@@ -76,15 +76,28 @@ pip install transformers
 
 ## Running
 
+MarkText has two front-ends over the same core (`engine.py`, `config.py`, `detector.py`). They share the same config, history CSV and `generated/` folders.
+
+Desktop (Tkinter):
+
 ```bash
 python main.py
 ```
+
+Web (Streamlit), opens at http://localhost:8501:
+
+```bash
+pip install streamlit
+streamlit run app.py
+```
+
+The web app listens on localhost only (`.streamlit/config.toml`). "Save .TXT" writes the file into `generated/<mode>/` and also downloads a copy through the browser.
 
 On first run, Hugging Face will download Qwen2.5-0.5B-Instruct (~500 MB) into `~/.cache/huggingface/hub`. Subsequent launches use the cached model.
 
 ## GUI
 
-Four tabs:
+Four tabs, the same in the desktop and web front-ends:
 
 1. **Generate** — Enter a prompt, choose Normal or Watermarked mode, set max tokens, click Generate. Results can be copied or saved.
 2. **Detect** — Open a TXT file or paste text, click Analyze. Shows tokens analyzed, green fraction, Z-score, and classification.
