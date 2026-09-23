@@ -104,23 +104,23 @@ export function ThresholdStrip() {
 /* The measured table from the newest batch. Reads the API when it is up;
    otherwise shows the numbers from the smoke batch recorded in the README. */
 const FALLBACK: BatchSummaryRow[] = [
+  { mode: "watermarked", max_new_tokens: 150, n: 100, mean_z: 5.22, mean_green_pct: 71.7, flagged_rate: 0.86, possible_or_above_rate: 1, inconclusive_rate: 0.01, retokenize_mismatch: 3, rate_meaning: "TP rate @ z>=4.0" },
+  { mode: "normal", max_new_tokens: 150, n: 100, mean_z: -0.35, mean_green_pct: 48.5, flagged_rate: 0, possible_or_above_rate: 0, inconclusive_rate: 0.01, retokenize_mismatch: 7, rate_meaning: "FP rate @ z>=4.0" },
   { mode: "watermarked", max_new_tokens: 50, n: 3, mean_z: 2.26, mean_green_pct: 66.7, flagged_rate: 0, possible_or_above_rate: 0.67, inconclusive_rate: 1, retokenize_mismatch: 0, rate_meaning: "TP rate @ z>=4.0" },
-  { mode: "watermarked", max_new_tokens: 150, n: 3, mean_z: 3.97, mean_green_pct: 66.4, flagged_rate: 0.33, possible_or_above_rate: 1, inconclusive_rate: 0, retokenize_mismatch: 0, rate_meaning: "TP rate @ z>=4.0" },
   { mode: "watermarked", max_new_tokens: 300, n: 3, mean_z: 6.42, mean_green_pct: 69.3, flagged_rate: 1, possible_or_above_rate: 1, inconclusive_rate: 0, retokenize_mismatch: 1, rate_meaning: "TP rate @ z>=4.0" },
   { mode: "normal", max_new_tokens: 50, n: 3, mean_z: 0.1, mean_green_pct: 50.7, flagged_rate: 0, possible_or_above_rate: 0, inconclusive_rate: 1, retokenize_mismatch: 0, rate_meaning: "FP rate @ z>=4.0" },
-  { mode: "normal", max_new_tokens: 150, n: 3, mean_z: -0.48, mean_green_pct: 46.9, flagged_rate: 0, possible_or_above_rate: 0, inconclusive_rate: 0.33, retokenize_mismatch: 1, rate_meaning: "FP rate @ z>=4.0" },
   { mode: "normal", max_new_tokens: 300, n: 3, mean_z: 0.46, mean_green_pct: 51.6, flagged_rate: 0, possible_or_above_rate: 0, inconclusive_rate: 0, retokenize_mismatch: 2, rate_meaning: "FP rate @ z>=4.0" },
 ];
 
 export function ResultsTable() {
   const [rows, setRows] = useState<BatchSummaryRow[]>(FALLBACK);
-  const [label, setLabel] = useState("Smoke batch: 3 prompts, 3 lengths, both modes (18 generations).");
+  const [label, setLabel] = useState("Recorded batches: 100 prompts at 150 tokens, plus 3 prompts at 50 and 300 tokens.");
   useEffect(() => {
     api
       .experiments()
       .then(async (r) => {
         const biggest = [...r.batches].sort((a, b) => b.rows - a.rows)[0];
-        if (!biggest || biggest.rows <= 18) return;
+        if (!biggest || biggest.rows <= 200) return;
         const d = await api.experiment(biggest.batch_id);
         if (d.summary.length) {
           setRows(d.summary);
