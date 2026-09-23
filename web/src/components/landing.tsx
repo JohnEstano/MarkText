@@ -5,6 +5,7 @@ import { api, type BatchSummaryRow } from "@/lib/api";
 import { fmt } from "@/lib/format";
 import { ZMeter } from "@/components/verdict";
 import { Badge } from "@/components/ui";
+import { ArrowsClockwise, Key, Prohibit, type Icon } from "@phosphor-icons/react";
 
 /* Hero visual: a real detector reading of a real record (from the history
    file), not a mock screenshot. Numbers below are the first row of the
@@ -163,6 +164,125 @@ export function ResultsTable() {
         </table>
       </div>
       <p className="mt-2 text-xs text-fg-muted">{label} Threshold z ≥ 4.0. Rows under 100 scored tokens count as inconclusive.</p>
+    </div>
+  );
+}
+
+/* Section 4 fragment: the three facts behind "not an AI-text detector",
+   as a divided list rather than cards. */
+const FACTS: Array<{ Icon: Icon; title: string; body: string }> = [
+  {
+    Icon: Prohibit,
+    title: "Not a universal detector",
+    body: "NOT DETECTED means this watermark was not found. It says nothing about whether a person or another model wrote the text.",
+  },
+  {
+    Icon: Key,
+    title: "One shared secret",
+    body: "Whoever holds the key can verify a text, and can also produce one that passes. The key is generated on first run and never leaves the machine.",
+  },
+  {
+    Icon: ArrowsClockwise,
+    title: "Change the key, orphan the past",
+    body: "Text generated under an old key scores at chance under a new one. The history keeps the parameters of every run so the break is visible.",
+  },
+];
+
+export function FactList() {
+  return (
+    <ul className="divide-y divide-line border-y border-line">
+      {FACTS.map(({ Icon, title, body }) => (
+        <li key={title} className="flex gap-4 py-5">
+          <Icon size={22} weight="regular" className="mt-0.5 shrink-0 text-accent-soft-fg" aria-hidden />
+          <div>
+            <h3 className="font-medium">{title}</h3>
+            <p className="pretty mt-1 text-sm text-fg-muted">{body}</p>
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/* Section 5, lecturers: one prompt from the recorded batch, generated once
+   in each mode and scored. Both rows are real (run ids ec8ca564 and
+   843167dd, batch b6299b88). */
+const PAIR = {
+  prompt: "Tell a short story about a lighthouse keeper who finds a bottle.",
+  normal: { z: 0.0, green: 73, tokens: 146, seed: 153524, label: "NOT DETECTED" },
+  watermarked: { z: 5.46, green: 106, tokens: 146, seed: 418952, label: "LIKELY MARKTEXT" },
+};
+
+export function LectureDemo() {
+  const cells = [
+    ["Normal", PAIR.normal, "neutral"],
+    ["Watermarked", PAIR.watermarked, "accent"],
+  ] as const;
+  return (
+    <div className="rounded-[var(--radius-surface)] border border-line bg-bg-elev p-5 shadow-[var(--shadow-surface)]">
+      <p className="text-xs font-medium text-fg-muted">Same prompt, both modes</p>
+      <p className="mt-1.5 rounded-[var(--radius-input)] bg-bg-muted px-3 py-2 font-mono text-sm">{PAIR.prompt}</p>
+      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+        {cells.map(([name, r, tone]) => (
+          <div key={name} className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium">{name}</span>
+              <Badge tone={tone}>{r.label}</Badge>
+            </div>
+            <ZMeter z={r.z} />
+            <dl className="tabular grid grid-cols-2 gap-2 font-mono text-xs">
+              <div>
+                <dt className="text-fg-faint">green share</dt>
+                <dd>{fmt.pct(r.green / r.tokens, 1)}</dd>
+              </div>
+              <div>
+                <dt className="text-fg-faint">seed</dt>
+                <dd>{r.seed}</dd>
+              </div>
+            </dl>
+          </div>
+        ))}
+      </div>
+      <p className="mt-4 text-xs text-fg-faint">Prompt 4 of the recorded batch, 150 tokens each. Chance level is 50% green.</p>
+    </div>
+  );
+}
+
+/* Section 5, researchers: one history row as it is stored, every column a
+   fact the analysis can be repeated from. Row 843167dd from the batch. */
+const RECORD: Array<[string, string]> = [
+  ["run_id", "843167dd"],
+  ["timestamp", "2026-09-23 12:24:25"],
+  ["source", "batch"],
+  ["batch_id", "b6299b88"],
+  ["mode", "watermarked"],
+  ["seed", "418952"],
+  ["tokens_scored", "146"],
+  ["green_tokens", "106"],
+  ["z_score", "5.46"],
+  ["p_value", "2.818e-09"],
+  ["bias / ratio", "3.0 / 0.5"],
+  ["scheme / context", "selfhash / 5"],
+  ["device", "cpu"],
+  ["result", "LIKELY MARKTEXT"],
+];
+
+export function RecordCard() {
+  return (
+    <div className="rounded-[var(--radius-surface)] border border-line bg-bg-elev p-5 shadow-[var(--shadow-surface)]">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-fg-muted">One row of the history file</span>
+        <span className="font-mono text-xs text-fg-faint">21 columns</span>
+      </div>
+      <dl className="tabular mt-4 grid grid-cols-2 gap-x-6 gap-y-2.5 font-mono text-xs sm:grid-cols-3">
+        {RECORD.map(([k, v]) => (
+          <div key={k} className="min-w-0">
+            <dt className="truncate text-fg-faint">{k}</dt>
+            <dd className={k === "result" ? "truncate text-accent-soft-fg" : "truncate"}>{v}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-4 text-xs text-fg-faint">Filter by any column, add a note, export the set, or delete with a backup taken first.</p>
     </div>
   );
 }

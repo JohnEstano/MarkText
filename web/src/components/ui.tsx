@@ -144,3 +144,40 @@ export function Metric({ label, value, hint }: { label: string; value: React.Rea
     </div>
   );
 }
+
+/* Client-side pager for tables the API returns whole. Shows the window it
+   is on, and never lets the page run past the last one. */
+export function Pager({
+  page,
+  total,
+  per,
+  onChange,
+}: {
+  page: number;
+  total: number;
+  per: number;
+  onChange: (page: number) => void;
+}) {
+  const pages = Math.max(1, Math.ceil(total / per));
+  const cur = Math.min(page, pages);
+  const from = total === 0 ? 0 : (cur - 1) * per + 1;
+  const to = Math.min(cur * per, total);
+  return (
+    <nav aria-label="Pagination" className="flex flex-wrap items-center justify-between gap-3 text-sm">
+      <p className="tabular font-mono text-xs text-fg-muted">
+        {from}–{to} of {total}
+      </p>
+      <div className="flex items-center gap-2">
+        <Button variant="secondary" size="sm" disabled={cur <= 1} onClick={() => onChange(cur - 1)}>
+          Previous
+        </Button>
+        <span className="tabular font-mono text-xs text-fg-muted">
+          page {cur} of {pages}
+        </span>
+        <Button variant="secondary" size="sm" disabled={cur >= pages} onClick={() => onChange(cur + 1)}>
+          Next
+        </Button>
+      </div>
+    </nav>
+  );
+}

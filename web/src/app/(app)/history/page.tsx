@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { DownloadSimple, PencilSimple, Trash, X } from "@phosphor-icons/react";
 import { api, type HistoryFilters, type HistoryResponse, type HistoryRow } from "@/lib/api";
 import { fmt } from "@/lib/format";
-import { Button, Input, Label, Select, Panel, Notice, Skeleton, Metric, Empty, Badge, buttonClass } from "@/components/ui";
+import { Button, Input, Label, Select, Panel, Notice, Skeleton, Metric, Empty, Badge, Pager, buttonClass } from "@/components/ui";
 import { VerdictBadge } from "@/components/verdict";
 import { ZChart } from "@/components/history-chart";
 
@@ -16,6 +16,14 @@ export default function HistoryPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [editing, setEditing] = useState<HistoryRow | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [page, setPage] = useState(1);
+  const PER = 10;
+
+  /* a new filter mask always starts at the first page */
+  function updateFilters(f: HistoryFilters) {
+    setFilters(f);
+    setPage(1);
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +48,12 @@ export default function HistoryPage() {
     () => (data?.summary?.[0] ? Object.keys(data.summary[0]) : []),
     [data],
   );
+  const pageRows = useMemo(() => {
+    const rows = data?.rows ?? [];
+    const pages = Math.max(1, Math.ceil(rows.length / PER));
+    const cur = Math.min(page, pages);
+    return rows.slice((cur - 1) * PER, cur * PER);
+  }, [data, page]);
 
   async function clearAll() {
     try {
@@ -76,7 +90,7 @@ export default function HistoryPage() {
           <Select
             id="f-result"
             value={filters.result?.[0] ?? ""}
-            onChange={(e) => setFilters({ ...filters, result: e.target.value ? [e.target.value] : undefined })}
+            onChange={(e) => updateFilters({ ...filters, result: e.target.value ? [e.target.value] : undefined })}
           >
             <option value="">All</option>
             {data?.options.results.map((r) => (
@@ -89,7 +103,7 @@ export default function HistoryPage() {
           <Select
             id="f-source"
             value={filters.source?.[0] ?? ""}
-            onChange={(e) => setFilters({ ...filters, source: e.target.value ? [e.target.value] : undefined })}
+            onChange={(e) => updateFilters({ ...filters, source: e.target.value ? [e.target.value] : undefined })}
           >
             <option value="">All</option>
             {data?.options.sources.map((r) => (
@@ -99,7 +113,7 @@ export default function HistoryPage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="f-batch">Batch</Label>
-          <Select id="f-batch" value={filters.batch_id ?? ""} onChange={(e) => setFilters({ ...filters, batch_id: e.target.value || undefined })}>
+          <Select id="f-batch" value={filters.batch_id ?? ""} onChange={(e) => updateFilters({ ...filters, batch_id: e.target.value || undefined })}>
             <option value="">All</option>
             {data?.options.batches.map((b) => (
               <option key={b}>{b}</option>
@@ -108,7 +122,7 @@ export default function HistoryPage() {
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="f-q">Filename contains</Label>
-          <Input id="f-q" value={filters.q ?? ""} onChange={(e) => setFilters({ ...filters, q: e.target.value || undefined })} />
+          <Input id="f-q" value={filters.q ?? ""} onChange={(e) => updateFilters({ ...filters, q: e.target.value || undefined })} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="f-min">Min tokens</Label>
@@ -118,7 +132,7 @@ export default function HistoryPage() {
             min={0}
             step={10}
             value={filters.min_tokens ?? 0}
-            onChange={(e) => setFilters({ ...filters, min_tokens: Number(e.target.value) || undefined })}
+            onChange={(e) => updateFilters({ ...filters, min_tokens: Number(e.target.value) || undefined })}
           />
         </div>
       </Panel>
@@ -200,7 +214,7 @@ export default function HistoryPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
-                      {data.rows.map((r) => (
+                      {pageRows.map((r) => (
                         <tr key={r.run_id} className="hover:bg-bg-muted/60">
                           <td className="px-3 py-2 font-mono text-xs">{r.run_id}</td>
                           <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-fg-muted">{r.timestamp}</td>
@@ -229,6 +243,9 @@ export default function HistoryPage() {
                       ))}
                     </tbody>
                   </table>
+                </div>
+                <div className="mt-3">
+                  <Pager page={page} total={data.rows.length} per={PER} onChange={setPage} />
                 </div>
               </section>
             </>

@@ -1,8 +1,7 @@
 import Link from "next/link";
-import Image from "next/image";
 import { buttonClass } from "@/components/ui";
 import { Reveal } from "@/components/reveal";
-import { HeroPreview, TokenStrip, FormulaStrip, ThresholdStrip, ResultsTable } from "@/components/landing";
+import { HeroPreview, TokenStrip, FormulaStrip, ThresholdStrip, ResultsTable, FactList, LectureDemo, RecordCard } from "@/components/landing";
 
 export default function LandingPage() {
   return (
@@ -80,52 +79,66 @@ export default function LandingPage() {
         </Reveal>
       </section>
 
-      {/* 4. What it is not: a plain statement block */}
+      {/* 4. What it is not: the statement on the left, the three facts behind it on the right */}
       <section className="border-y border-line">
-        <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:py-20">
+        <div className="mx-auto grid max-w-7xl gap-10 px-4 py-16 sm:px-6 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16 lg:py-24">
           <Reveal>
-            <p className="pretty max-w-[40ch] text-2xl font-medium leading-snug tracking-tight md:text-3xl">
+            <p className="pretty max-w-[24ch] text-2xl font-medium leading-snug tracking-tight md:text-3xl">
               MarkText is not an AI-text detector. It recognises only text that this installation generated with its own
               key.
             </p>
-            <p className="pretty mt-5 max-w-[60ch] text-fg-muted">
-              The key is a shared secret: whoever holds it can verify a text and can also produce one that passes. Changing
-              the key orphans everything generated before. That trade-off is the design, and the app says so on every result.
+            <p className="pretty mt-5 max-w-[44ch] text-fg-muted">
+              That limit is the design, and the app says so on every result. Three consequences follow from it.
             </p>
+          </Reveal>
+          <Reveal delay={0.08}>
+            <FactList />
           </Reveal>
         </div>
       </section>
 
-      {/* 5. For lecturers / for researchers: two columns, one image */}
+      {/* 5. For lecturers / for researchers: two rows that alternate sides, each with a real fragment */}
       <section className="mx-auto max-w-7xl px-4 py-20 sm:px-6 lg:py-28">
-        <div className="grid gap-10 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
+        <Reveal>
+          <h2 className="balance max-w-[24ch] text-3xl font-semibold tracking-tight md:text-4xl">Built for two rooms</h2>
+        </Reveal>
+        <div className="mt-12 grid items-center gap-8 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)] lg:gap-16">
           <Reveal>
-            {/* TODO: replace with a real classroom / lab photograph, 4:5 */}
-            <Image
-              src="https://picsum.photos/seed/marktext-lecture-hall/900/1125"
-              alt="A lecture hall seen from the back rows"
-              width={900}
-              height={1125}
-              className="aspect-[4/5] w-full rounded-[var(--radius-surface)] object-cover"
-              unoptimized
+            <h3 className="text-xl font-semibold tracking-tight md:text-2xl">In the lecture hall</h3>
+            <p className="pretty mt-3 max-w-[48ch] text-fg-muted">
+              Show the class what a watermark is by running the same prompt twice. Both texts read alike; only one crosses
+              the line, and the history keeps the record.
+            </p>
+            <Workflow
+              steps={[
+                "Pick a prompt the class knows and generate it once in each mode.",
+                "Read both aloud. Nobody can tell them apart.",
+                "Detect both. The watermarked one clears z = 4; the other sits at chance.",
+              ]}
             />
           </Reveal>
-          <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-1 lg:gap-12">
-            <Reveal delay={0.05}>
-              <h3 className="text-xl font-semibold tracking-tight">For lecturers</h3>
-              <p className="pretty mt-3 text-fg-muted">
-                Generate the same prompt twice, once normal and once watermarked, in front of the class. Both read alike.
-                Only one crosses the line. The history keeps the record.
-              </p>
-            </Reveal>
-            <Reveal delay={0.1}>
-              <h3 className="text-xl font-semibold tracking-tight">For researchers</h3>
-              <p className="pretty mt-3 text-fg-muted">
-                Every analysis is a row with its seed, settings and device. Filter, annotate, export, and run batches that
-                put a false-positive rate next to the threshold you chose.
-              </p>
-            </Reveal>
-          </div>
+          <Reveal delay={0.08}>
+            <LectureDemo />
+          </Reveal>
+        </div>
+        <div className="mt-20 grid items-center gap-8 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)] lg:gap-16 lg:mt-28">
+          <Reveal className="lg:order-1">
+            <h3 className="text-xl font-semibold tracking-tight md:text-2xl">In the lab</h3>
+            <p className="pretty mt-3 max-w-[48ch] text-fg-muted">
+              Every analysis is a row with its seed, parameters and device, so any number in a report can be traced back to
+              the run that produced it.
+            </p>
+            <Workflow
+              steps={[
+                "Run a batch over the 100 prompts at the lengths you care about.",
+                "Filter the history by batch, annotate outliers, export the set as a new CSV.",
+                "Report the flagged rate for both modes next to the threshold you chose.",
+              ]}
+            />
+          </Reveal>
+          <Reveal delay={0.08} className="lg:order-0">
+            <RecordCard />
+          </Reveal>
         </div>
       </section>
 
@@ -160,5 +173,18 @@ function Step({ n, title, body, children }: { n: number; title: string; body: st
         <div className="lg:pl-0">{children}</div>
       </Reveal>
     </li>
+  );
+}
+
+function Workflow({ steps }: { steps: string[] }) {
+  return (
+    <ol className="mt-6 space-y-3">
+      {steps.map((t, i) => (
+        <li key={i} className="flex gap-4 text-sm">
+          <span className="tabular mt-0.5 font-mono text-xs text-fg-faint">{i + 1}</span>
+          <span className="pretty text-fg-muted">{t}</span>
+        </li>
+      ))}
+    </ol>
   );
 }
