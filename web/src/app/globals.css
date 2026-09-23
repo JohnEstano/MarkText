@@ -1,0 +1,130 @@
+@import "tailwindcss";
+
+/* MarkText design tokens. One neutral family (zinc), one accent (a
+   desaturated green: the green list is the product's own metaphor).
+   Radius rule: surfaces 12px, inputs 8px, buttons pill. */
+:root {
+  --bg: #fafaf9;
+  --bg-elev: #ffffff;
+  --bg-muted: #f1f1ef;
+  --fg: #18181b;
+  --fg-muted: #52525b;
+  --fg-faint: #a1a1aa;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --accent: #2f7d5b;
+  --accent-fg: #ffffff;
+  --accent-soft: #e6f2ec;
+  --accent-soft-fg: #1f5c42;
+  --warn: #9a6b1f;
+  --warn-soft: #fbf1dc;
+  --danger: #a33b3b;
+  --danger-soft: #fbe7e7;
+  --shadow: 0 1px 2px rgb(24 24 27 / 0.06), 0 8px 24px -12px rgb(24 24 27 / 0.18);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f0f10;
+    --bg-elev: #161618;
+    --bg-muted: #1c1c1f;
+    --fg: #ededec;
+    --fg-muted: #a1a1aa;
+    --fg-faint: #71717a;
+    --line: #27272a;
+    --line-strong: #3f3f46;
+    --accent: #5fb58f;
+    --accent-fg: #0b1a13;
+    --accent-soft: #163526;
+    --accent-soft-fg: #a7dcc3;
+    --warn: #d4a24c;
+    --warn-soft: #2d2412;
+    --danger: #e07a7a;
+    --danger-soft: #331b1b;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-elev: var(--bg-elev);
+  --color-bg-muted: var(--bg-muted);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-soft-fg: var(--accent-soft-fg);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --radius-surface: 12px;
+  --radius-input: 8px;
+  --shadow-surface: var(--shadow);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.balance {
+  text-wrap: balance;
+}
+
+.pretty {
+  text-wrap: pretty;
+}
+
+/* focus ring for keyboard users, on everything interactive */
+:where(a, button, input, textarea, select, [role="button"]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  html { scroll-behavior: auto; }
+}
+
+/* Markdown rendering for the About page (README) */
+.prose-marktext { max-width: 72ch; }
+.prose-marktext h1 { font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; margin: 0 0 1rem; }
+.prose-marktext h2 { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.01em; margin: 2.25rem 0 0.75rem; }
+.prose-marktext h3 { font-size: 1.05rem; font-weight: 600; margin: 1.5rem 0 0.5rem; }
+.prose-marktext p, .prose-marktext li { color: var(--fg-muted); line-height: 1.7; }
+.prose-marktext p { margin: 0.75rem 0; }
+.prose-marktext ul, .prose-marktext ol { padding-left: 1.25rem; margin: 0.75rem 0; }
+.prose-marktext ul { list-style: disc; }
+.prose-marktext ol { list-style: decimal; }
+.prose-marktext strong { color: var(--fg); font-weight: 600; }
+.prose-marktext a { color: var(--accent-soft-fg); text-decoration: underline; text-underline-offset: 3px; }
+.prose-marktext code { font-family: var(--font-mono); font-size: 0.85em; background: var(--bg-muted); padding: 0.1em 0.35em; border-radius: 4px; }
+.prose-marktext pre { background: var(--bg-muted); border: 1px solid var(--line); border-radius: var(--radius-input); padding: 0.75rem 1rem; overflow-x: auto; margin: 1rem 0; }
+.prose-marktext pre code { background: none; padding: 0; font-size: 0.8rem; }
+.prose-marktext blockquote { border-left: 3px solid var(--accent); padding-left: 1rem; margin: 1rem 0; }
+.prose-marktext table { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin: 1rem 0; }
+.prose-marktext th, .prose-marktext td { border-bottom: 1px solid var(--line); padding: 0.5rem 0.75rem; text-align: left; vertical-align: top; }
+.prose-marktext th { color: var(--fg-muted); font-weight: 500; font-size: 0.75rem; }
+.prose-marktext hr { border: 0; border-top: 1px solid var(--line); margin: 2rem 0; }

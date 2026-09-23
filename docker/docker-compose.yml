@@ -1,0 +1,22 @@
+# Local or single-VM deployment: API + web behind their own ports.
+# docker compose -f docker/docker-compose.yml up --build
+services:
+  api:
+    build: { context: .., dockerfile: docker/Dockerfile.api }
+    ports: ["8000:8000"]
+    volumes:
+      - ../config:/app/config
+      - ../logs:/app/logs
+      - ../generated:/app/generated
+      - hf-cache:/root/.cache/huggingface
+    environment:
+      MARKTEXT_CORS: http://localhost:3000
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+      args: { NEXT_PUBLIC_API_URL: http://localhost:8000 }
+    ports: ["3000:3000"]
+    depends_on: [api]
+volumes:
+  hf-cache:
