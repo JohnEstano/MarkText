@@ -105,6 +105,16 @@ Web (Streamlit), opens at http://localhost:8501 (bound to localhost in `.streaml
 streamlit run app.py
 ```
 
+Web platform (API + site), the front end meant for deployment and, later, accounts:
+
+```bash
+pip install fastapi uvicorn httpx
+uvicorn api.main:app --port 8000          # loads the model once, serves the JSON API
+cd web && npm install && npm run dev      # http://localhost:3000, expects the API on :8000
+```
+
+`api/` wraps the same core modules (`engine.py`, `history.py`, `experiment.py`, `config.py`) behind a small FastAPI service; `web/` is a Next.js site with a landing page, an About page that renders this README, and the four app screens (Generate, Detect, History, Experiments). `docker/` holds Dockerfiles and a compose file for a single-server deployment; nothing is deployed yet.
+
 On first run Hugging Face downloads Qwen2.5-0.5B-Instruct (about 1 GB) into `~/.cache/huggingface/hub`; later launches use the cache. Both front-ends share the config, the history CSV and the `generated/` folders. Generation on a CPU takes a few tokens per second.
 
 Tests (no model download needed):
