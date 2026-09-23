@@ -50,7 +50,8 @@ A Z-score ≥ 4.0 is classified as **LIKELY MARKTEXT-GENERATED**. A Z-score betw
 | `config/watermark_config.json` | JSON | Watermark parameters, model ID, generation settings |
 | `generated/normal/*.txt` | TXT | Unwatermarked generated documents |
 | `generated/watermarked/*.txt` | TXT | Watermarked generated documents |
-| `logs/detection_history.csv` | CSV | Append-only detection history log |
+| `logs/detection_history.csv` | CSV | Detection history log, one row per analysis |
+| `logs/exports/*.csv` | CSV | Exports and backups written by the web History tab |
 
 ## File Handling
 
@@ -101,7 +102,7 @@ Four tabs, the same in the desktop and web front-ends:
 
 1. **Generate** — Enter a prompt, choose Normal or Watermarked mode, set max tokens, click Generate. Results can be copied or saved.
 2. **Detect** — Open a TXT file or paste text, click Analyze. Shows tokens analyzed, green fraction, Z-score, and classification.
-3. **History** — Browse or clear detection history (CSV-backed).
+3. **History** — Browse detection history (CSV-backed). In the web app the tab is a small dashboard: filter by result, filename, date and length; KPIs; a z-score-vs-tokens chart; a grouped summary; export of the filtered rows or the summary to a new CSV under `logs/exports/`; and Clear History writes a backup copy there first.
 4. **About** — Project description and limitations.
 
 ## Limitations

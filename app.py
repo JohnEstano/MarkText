@@ -14,8 +14,10 @@ st.cache_resource (the model, shared by the whole server process).
 
 import datetime
 import pathlib
+import shutil
 import threading
 
+import pandas as pd
 import streamlit as st
 
 import config as cfg
@@ -24,6 +26,7 @@ from engine import Engine
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 GENERATED_DIR = BASE_DIR / "generated"
+EXPORT_DIR = BASE_DIR / "logs" / "exports"
 
 MIN_TOKENS = 50
 MAX_TOKENS = 2000
@@ -82,7 +85,7 @@ def get_engine():
 
 
 def ensure_dirs():
-    for d in (GENERATED_DIR / "normal", GENERATED_DIR / "watermarked"):
+    for d in (GENERATED_DIR / "normal", GENERATED_DIR / "watermarked", EXPORT_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
@@ -98,6 +101,43 @@ def save_txt(text, mode):
 def default_filename(mode):
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return "marktext_{}_{}.txt".format(mode, stamp)
+
+
+def stamped(stem, suffix):
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return EXPORT_DIR / "{}_{}{}".format(stem, stamp, suffix)
+
+
+def load_history_df():
+    """The history CSV as a DataFrame. detector.py writes it row by row with
+    the csv module; pandas only reads it for filtering and summaries."""
+    detector.ensure_history()
+    try:
+        df = pd.read_csv(detector.HISTORY_PATH, parse_dates=["timestamp"])
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame(columns=detector.COLUMNS)
+    df["filename"] = df["filename"].fillna("")
+    return df
+
+
+def export_csv(df, stem):
+    """Write a NEW csv under logs/exports/; the history file is never edited."""
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    path = stamped(stem, ".csv")
+    df.to_csv(path, index=False, encoding="utf-8")
+    return path
+
+
+def summarise(df):
+    if df.empty:
+        return pd.DataFrame(columns=["result", "analyses", "mean_z",
+                                     "mean_green_pct", "mean_tokens"])
+    return (df.groupby("result")
+              .agg(analyses=("z_score", "count"),
+                   mean_z=("z_score", "mean"),
+                   mean_green_pct=("green_fraction", "mean"),
+                   mean_tokens=("tokens_scored", "mean"))
+              .reset_index())
 
 
 # ---------------------------------------------------------------- callbacks
@@ -141,13 +181,28 @@ def on_clear_detect():
     state["upload_error"] = ""
 
 
+def on_export(key, stem):
+    # the frame to export was stashed in session_state by the History tab
+    state = st.session_state
+    try:
+        state["export_msg"] = "Exported to: {}".format(export_csv(state[key], stem))
+        state["export_error"] = ""
+    except OSError as exc:
+        state["export_msg"] = ""
+        state["export_error"] = "Export failed: {}".format(exc)
+
+
 def on_clear_history():
     state = st.session_state
     try:
+        # keep a copy of the original before truncating it
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        backup = stamped("detection_history_backup", ".csv")
+        shutil.copyfile(detector.HISTORY_PATH, backup)
         detector.clear_history()
-        state["history_msg"] = "History cleared."
+        state["history_msg"] = "History cleared. Backup saved to: {}".format(backup)
     except OSError as exc:
-        state["history_msg"] = "Could not clear history: {}".format(exc)
+        state["history_msg"] = "History NOT cleared: {}".format(exc)
     state["confirm_clear"] = False
 
 
@@ -164,6 +219,8 @@ for key, default in (
     ("gen_text", ""), ("gen_mode", ""), ("gen_saved", ""), ("gen_save_error", ""),
     ("detect_text", ""), ("detect_loaded", ""), ("detect_filename", ""),
     ("detect_stats", None), ("upload_error", ""), ("history_msg", ""),
+    ("export_msg", ""), ("export_error", ""),
+    ("export_rows", None), ("export_summary", None),
 ):
     state.setdefault(key, default)
 
@@ -294,23 +351,98 @@ with tab_hist:
     if state["history_msg"]:
         st.info(state["history_msg"])
         state["history_msg"] = ""
+    if state["export_msg"]:
+        st.success(state["export_msg"])
+        state["export_msg"] = ""
+    if state["export_error"]:
+        st.error(state["export_error"])
+        state["export_error"] = ""
 
     try:
-        detector.ensure_history()
-        rows = detector.read_history()
-    except OSError as exc:
-        rows = []
+        df = load_history_df()
+    except (OSError, pd.errors.ParserError) as exc:
+        df = pd.DataFrame(columns=detector.COLUMNS)
         st.error("Could not read the history CSV: {}".format(exc))
 
-    if rows:
-        st.dataframe(rows, width="stretch", hide_index=True)
-        st.caption("{} analyses, newest first — {}".format(
-            len(rows), detector.HISTORY_PATH))
-        confirm = st.checkbox("Yes, delete all detection records "
-                              "(the CSV header is kept)", key="confirm_clear")
-        st.button("Clear History", disabled=not confirm, on_click=on_clear_history)
-    else:
+    if df.empty:
         st.write("No detection history yet.")
+    else:
+        # --- filters: one Boolean mask, original df untouched
+        st.subheader("Filter records")
+        f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
+        results = sorted(df["result"].unique())
+        pick = f1.multiselect("Result", results, default=results)
+        query = f2.text_input("Filename contains", "")
+        dmin, dmax = df["timestamp"].min().date(), df["timestamp"].max().date()
+        dates = f3.date_input("Date range", (dmin, dmax), min_value=dmin, max_value=dmax)
+        tmax = int(df["tokens_scored"].max())
+        min_tok = f4.number_input("Min tokens", 0, tmax, 0, step=10)
+
+        mask = df["result"].isin(pick)
+        if query:
+            mask &= df["filename"].str.contains(query, case=False, na=False)
+        if isinstance(dates, tuple) and len(dates) == 2:
+            mask &= df["timestamp"].dt.date.between(dates[0], dates[1])
+        mask &= df["tokens_scored"] >= min_tok
+        filtered = df[mask]
+
+        # --- KPIs, chart, summary, table: all driven by `filtered`
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric("Analyses in view", len(filtered))
+        k2.metric("Mean z-score", "{:.2f}".format(filtered["z_score"].mean())
+                  if len(filtered) else "—")
+        k3.metric("Flagged LIKELY MARKTEXT",
+                  "{:.0%}".format((filtered["result"] == "LIKELY MARKTEXT").mean())
+                  if len(filtered) else "—")
+        k4.metric("Median tokens", int(filtered["tokens_scored"].median())
+                  if len(filtered) else "—")
+
+        if filtered.empty:
+            st.warning("No records match the filters.")
+        else:
+            st.subheader("Z-score vs tokens analysed")
+            st.scatter_chart(filtered, x="tokens_scored", y="z_score", color="result",
+                             x_label="tokens scored", y_label="z-score")
+
+            summary = summarise(filtered)
+            st.subheader("Summary by result")
+            st.dataframe(summary, hide_index=True, width="stretch",
+                         column_config={
+                             "mean_z": st.column_config.NumberColumn(format="%.2f"),
+                             "mean_green_pct": st.column_config.NumberColumn(format="%.1f"),
+                             "mean_tokens": st.column_config.NumberColumn(format="%.0f")})
+
+            st.subheader("Records")
+            st.dataframe(filtered.sort_values("timestamp", ascending=False),
+                         hide_index=True, width="stretch",
+                         column_config={
+                             "timestamp": st.column_config.DatetimeColumn(
+                                 format="YYYY-MM-DD HH:mm:ss"),
+                             "green_fraction": st.column_config.NumberColumn(
+                                 "green %", format="%.2f"),
+                             "z_score": st.column_config.NumberColumn(format="%.2f")})
+
+            # export: the app writes a new csv under logs/exports/ and the
+            # browser downloads a copy; the history file itself is never edited
+            state["export_rows"] = filtered
+            state["export_summary"] = summary
+            e1, e2 = st.columns(2)
+            e1.download_button("Export filtered rows (CSV)",
+                               data=filtered.to_csv(index=False).encode("utf-8"),
+                               file_name="history_filtered.csv", mime="text/csv",
+                               on_click=on_export, args=("export_rows", "history_filtered"))
+            e2.download_button("Export summary (CSV)",
+                               data=summary.to_csv(index=False).encode("utf-8"),
+                               file_name="history_summary.csv", mime="text/csv",
+                               on_click=on_export, args=("export_summary", "history_summary"))
+
+        st.caption("{} analyses in {} - writes go through detector.py (csv module); "
+                   "this tab only reads. Per-record edit/delete needs a unique id "
+                   "column (planned).".format(len(df), detector.HISTORY_PATH))
+        confirm = st.checkbox("Yes, clear all detection records "
+                              "(a backup copy is written to logs/exports/ first)",
+                              key="confirm_clear")
+        st.button("Clear History", disabled=not confirm, on_click=on_clear_history)
 
 # ----- TAB 4 — ABOUT
 with tab_about:

@@ -2,6 +2,10 @@
 [server]
 address = "localhost"
 headless = true
+# Streamlit's source watcher walks every imported module; transformers lazily
+# imports optional vision modules and logs a traceback for each missing one.
+# The demo does not need hot reload, so the watcher is off.
+fileWatcherType = "none"
 
 [browser]
 gatherUsageStats = false
