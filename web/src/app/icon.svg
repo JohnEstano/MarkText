@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <style>
+    .ink { stroke: #18181b; }
+    .key { stroke: #2f7d5b; }
+    .keyfill { fill: #2f7d5b; }
+    @media (prefers-color-scheme: dark) {
+      .ink { stroke: #fafafa; }
+      .key { stroke: #5fb58f; }
+      .keyfill { fill: #5fb58f; }
+    }
+  </style>
+  <polyline class="ink" points="5.5,30 5.5,8.5 13,20" fill="none" stroke-width="5" stroke-linejoin="miter" stroke-miterlimit="6"/>
+  <polyline class="ink" points="26.5,30 26.5,8.5 19,20" fill="none" stroke-width="5" stroke-linejoin="miter" stroke-miterlimit="6"/>
+  <circle class="key" cx="16" cy="5" r="3.2" fill="none" stroke-width="2.4"/>
+  <line class="key" x1="16" y1="8.2" x2="16" y2="30" stroke-width="3.4"/>
+  <rect class="keyfill" x="17.7" y="24" width="3.3" height="2.6"/>
+</svg>

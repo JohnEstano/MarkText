@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn, buttonClass } from "@/components/ui";
+import { Mark } from "@/components/mark";
 
 const APP_LINKS = [
   { href: "/generate", label: "Generate" },
@@ -14,7 +15,7 @@ const APP_LINKS = [
 export function Wordmark() {
   return (
     <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight text-fg">
-      <span aria-hidden className="inline-block h-3 w-3 rounded-sm bg-accent" />
+      <Mark size={22} />
       MarkText
     </Link>
   );
