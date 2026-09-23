@@ -6,6 +6,73 @@ headless = true
 # imports optional vision modules and logs a traceback for each missing one.
 # The demo does not need hot reload, so the watcher is off.
 fileWatcherType = "none"
+# Serves ./static (the Geist font files and the mark) at /app/static.
+enableStaticServing = true
 
 [browser]
 gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+# The same tokens as the web site (web/src/app/globals.css on the
+# web-platform branch): one neutral family, one desaturated green accent,
+# Geist and Geist Mono, 12 px surfaces and pill buttons. [theme] is the light
+# set; [theme.dark] overrides it when the browser prefers dark.
+[theme]
+base = "light"
+primaryColor = "#2f7d5b"
+backgroundColor = "#fafaf9"
+secondaryBackgroundColor = "#f1f1ef"
+textColor = "#18181b"
+linkColor = "#1f5c42"
+borderColor = "#e4e4e7"
+dataframeBorderColor = "#e4e4e7"
+codeBackgroundColor = "#f1f1ef"
+codeTextColor = "#18181b"
+font = "Geist, sans-serif"
+headingFont = "Geist, sans-serif"
+codeFont = "Geist Mono, monospace"
+baseRadius = "12px"
+buttonRadius = "full"
+showWidgetBorder = true
+greenColor = "#2f7d5b"
+greenBackgroundColor = "#e6f2ec"
+greenTextColor = "#1f5c42"
+orangeColor = "#9a6b1f"
+orangeBackgroundColor = "#fbf1dc"
+orangeTextColor = "#9a6b1f"
+redColor = "#a33b3b"
+redBackgroundColor = "#fbe7e7"
+redTextColor = "#a33b3b"
+chartCategoricalColors = ["#2f7d5b", "#52525b", "#9a6b1f", "#a33b3b", "#a1a1aa"]
+
+[[theme.fontFaces]]
+family = "Geist"
+url = "app/static/fonts/Geist.woff2"
+weight = "100 900"
+
+[[theme.fontFaces]]
+family = "Geist Mono"
+url = "app/static/fonts/GeistMono.woff2"
+weight = "100 900"
+
+[theme.dark]
+primaryColor = "#5fb58f"
+backgroundColor = "#0f0f10"
+secondaryBackgroundColor = "#1c1c1f"
+textColor = "#ededec"
+linkColor = "#a7dcc3"
+borderColor = "#27272a"
+dataframeBorderColor = "#27272a"
+codeBackgroundColor = "#1c1c1f"
+codeTextColor = "#ededec"
+greenColor = "#5fb58f"
+greenBackgroundColor = "#163526"
+greenTextColor = "#a7dcc3"
+orangeColor = "#d4a24c"
+orangeBackgroundColor = "#2d2412"
+orangeTextColor = "#d4a24c"
+redColor = "#e07a7a"
+redBackgroundColor = "#331b1b"
+redTextColor = "#e07a7a"

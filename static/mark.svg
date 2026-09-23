@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="12 2 180 180">
+  <style>
+    .ink { fill: #18181b; }
+    .key { stroke: #2f7d5b; }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #fafafa; }
+      .key { stroke: #5fb58f; }
+    }
+  </style>
+  <path class="ink" d="M32 52H43A4 4 0 0 1 47 56V58L81 92V125L47 91V168A8 8 0 0 1 39 176H32A8 8 0 0 1 24 168V60A8 8 0 0 1 32 52Z"/>
+  <path class="ink" d="M172 52H161A4 4 0 0 0 157 56V58L123 92V125L157 91V168A8 8 0 0 0 165 176H172A8 8 0 0 0 180 168V60A8 8 0 0 0 172 52Z"/>
+  <circle class="key" cx="102" cy="34" r="18.75" fill="none" stroke-width="13.5"/>
+  <line class="key" x1="102" y1="50" x2="102" y2="168.5" stroke-width="15" stroke-linecap="round"/>
+</svg>

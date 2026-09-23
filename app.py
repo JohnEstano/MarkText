@@ -37,13 +37,57 @@ README_PATH = BASE_DIR / "README.md"
 MIN_TOKENS = 50
 MAX_TOKENS = 2000
 
-# Engine.detect() label -> Streamlit call that renders it in a matching colour
-VERDICT_STYLE = {
-    LABEL_LIKELY: st.error,
-    LABEL_POSSIBLE: st.warning,
-    LABEL_NOT_DETECTED: st.success,
-    LABEL_INCONCLUSIVE: st.info,
+# Engine.detect() label -> badge tone, the same four tones the web site uses
+VERDICT_TONE = {
+    LABEL_LIKELY: "accent",
+    LABEL_POSSIBLE: "warn",
+    LABEL_NOT_DETECTED: "neutral",
+    LABEL_INCONCLUSIVE: "muted",
 }
+
+# Badge colours per theme (web/src/app/globals.css tokens). Streamlit tells
+# us which theme the browser resolved through st.context.theme.
+BADGE_COLOURS = {
+    "light": {
+        "accent": ("#e6f2ec", "#1f5c42"), "warn": ("#fbf1dc", "#9a6b1f"),
+        "neutral": ("#f1f1ef", "#52525b"), "muted": ("#f1f1ef", "#a1a1aa"),
+    },
+    "dark": {
+        "accent": ("#163526", "#a7dcc3"), "warn": ("#2d2412", "#d4a24c"),
+        "neutral": ("#1c1c1f", "#a1a1aa"), "muted": ("#1c1c1f", "#71717a"),
+    },
+}
+
+def theme_type() -> str:
+    """'light' or 'dark' as the browser resolved it; light if unknown."""
+    try:
+        return "dark" if st.context.theme.type == "dark" else "light"
+    except Exception:  # older Streamlit or no browser context
+        return "light"
+
+
+def badge(label: str) -> str:
+    """HTML for a verdict badge in the web site's style."""
+    bg, fg = BADGE_COLOURS[theme_type()][VERDICT_TONE.get(label, "muted")]
+    return ('<span style="display:inline-block;padding:4px 12px;border-radius:999px;'
+            'background:{bg};color:{fg};font-family:Geist,sans-serif;font-size:13px;'
+            'font-weight:500;letter-spacing:0.01em">{label}</span>'
+            ).format(bg=bg, fg=fg, label=label)
+
+
+def render_header() -> None:
+    """Wordmark row: the mark, the name and the one-line promise. The mark is
+    static/mark.svg (served at app/static, same geometry as the web site's
+    mark-paths.ts); st.html strips inline SVG, an <img> survives."""
+    st.html(
+        '<div style="display:flex;align-items:center;gap:12px;margin:4px 0 2px">'
+        '<img src="app/static/mark.svg" width="30" height="30" alt="">'
+        '<span style="font-family:Geist,sans-serif;font-size:26px;font-weight:600;'
+        'letter-spacing:-0.02em">MarkText</span></div>'
+        '<p style="margin:0 0 6px;opacity:0.7;font-size:15px">Watermark the text you '
+        'generate. Prove it later with a statistical test.</p>'
+    )
+
 
 ABOUT_FALLBACK = """\
 ### MarkText
@@ -236,9 +280,8 @@ def on_clear_history():
 
 
 # --------------------------------------------------------------------- page
-st.set_page_config(page_title="MarkText", layout="wide")
-st.title("MarkText")
-st.caption("Watermarking and Detection of LLM-Generated Text")
+st.set_page_config(page_title="MarkText", page_icon="static/mark.svg", layout="wide")
+render_header()
 
 config_notes = []
 try:
@@ -384,8 +427,7 @@ with tab_det:
             m1.metric("Watermark signal", "{:.1f}%".format(stats["green_fraction"] * 100.0))
             m2.metric("Z-score", "{:.2f}".format(stats["z_score"]))
             m1.metric("p-value", "{:.2e}".format(stats["p_value"]))
-            verdict = stats["label"]
-            VERDICT_STYLE.get(verdict, st.info)(verdict)
+            st.html(badge(stats["label"]))
         st.caption("MarkText detects ONLY text it generated with its own watermark "
                    "key and parameters. It is NOT a universal AI-text detector. "
                    "'NOT DETECTED' means this watermark was not found, not that a "
