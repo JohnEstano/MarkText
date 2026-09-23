@@ -18,7 +18,8 @@ A lecturer uses MarkText to verify whether a text was produced by *this* MarkTex
 - **Watermarked generation** through Hugging Face `WatermarkingConfig` (green/red list logit bias)
 - **Detection** through `WatermarkDetector`: tokens scored, green count, z-score, p-value, verdict
 - **Save as .txt** with a `.json` sidecar recording mode, seed and parameters; copy to clipboard
-- **Detection history** as CSV, with a dashboard in the web app: filters, KPIs, chart, grouped summary, export, backup before clear
+- **Detection history** as CSV with a unique id per record; web dashboard with filters, KPIs, chart, grouped summary, export, per-record note/filename editing and deletion, backup before any destructive write
+- **Batch experiment** (web tab or `experiment.py`): generate every prompt in both modes, score them all, and report true-positive and false-positive rates per length; interruptible and resumable
 - Fully local after the one-time model download
 
 ## Technology
@@ -65,16 +66,19 @@ The hashing key is a shared secret: whoever holds it can verify the watermark an
 | `config/watermark_config.example.json` | JSON | Schema with a null key |
 | `generated/normal/*.txt`, `generated/watermarked/*.txt` | TXT | Saved generations |
 | `generated/**/*.json` | JSON | Sidecar per saved text: mode, seed, parameters, device |
-| `logs/detection_history.csv` | CSV | One row per analysis |
+| `prompts/experiment_prompts.txt` | TXT | 100 prompts, one per line, read by the experiment |
+| `logs/detection_history.csv` | CSV | One row per analysis: `run_id`, source, mode, seed, tokens, green %, z, p-value, verdict, watermark parameters, device, note |
+| `logs/exports/experiment_<batch>.json` | JSON | Settings of a batch (prompt-file hash, lengths, seed base, config snapshot without the key) |
+| `logs/exports/detection_history_v1_*.csv` | CSV | Archive of a history file in the old 7-column layout, written once when it is migrated |
 | `logs/exports/*.csv` | CSV | Exports, summaries and backups written by the History tab |
 
 ## File handling
 
-- **Read**: config JSON (`config.py`), TXT files and their sidecars, the CSV history, `README.md` for the About tab
-- **Write**: TXT exports and JSON sidecars, the config on first run, new CSVs under `logs/exports/`
-- **Update**: append one CSV row per analysis (`history.py`, `csv.DictWriter`)
-- **Process**: tokenize, run inference, compute the z-score; filter, group and summarise the history with pandas (web app)
-- **Organize**: directories created on start, `normal/` vs `watermarked/`, timestamped names, backup before clearing
+- **Read**: config JSON (`config.py`), TXT files and their sidecars, the prompt list, the CSV history, `README.md` for the About tab
+- **Write**: TXT exports and JSON sidecars, the config on first run, batch settings JSON, new CSVs under `logs/exports/`
+- **Update**: append one CSV row per analysis; edit one record's note or filename, or delete one record, by `run_id` with a backup first and a check that exactly one row matches (`history.py`, `csv.DictWriter`)
+- **Process**: tokenize, run inference, compute the z-score; filter, group and summarise the history and batch results with pandas (web app)
+- **Organize**: directories created on start, `normal/` vs `watermarked/`, timestamped names, backup before every destructive write, automatic migration of an old history layout with the original archived
 
 Row writing uses the standard library `csv` module; pandas only reads the file and writes new ones. Model weights are read by `transformers` from the Hugging Face cache.
 
@@ -112,12 +116,36 @@ pytest -q
 
 ## GUI
 
-Four tabs in both front-ends:
+Four tabs in the desktop app, five in the web app:
 
 1. **Generate**: prompt, max tokens, Normal or Watermarked, Generate / Cancel. Copy, or Save (.txt + .json sidecar; the web app also downloads a copy).
 2. **Detect**: open a TXT (its sidecar is shown if present) or paste text, Analyze. Shows tokens analyzed, green tokens, signal, z-score, p-value and the verdict.
-3. **History**: the log. Web app: filter by result, filename, date and length; KPIs; z-score vs tokens chart; summary by result; export filtered rows or summary to a new CSV; Clear History writes a backup first.
-4. **About**: this README, read from disk, plus the current configuration (key hidden).
+3. **History**: the log. Web app: filter by result, source, batch, filename, date and length; KPIs; z-score vs tokens chart with the threshold line; summary by mode and result; export filtered rows or summary to a new CSV; edit a record's note or filename or delete it by `run_id`; Clear History writes a backup first.
+4. **Experiment** (web app only): run the batch described below and read its summary.
+5. **About**: this README, read from disk, plus the current configuration (key hidden).
+
+## Experiment: measuring detection
+
+The thresholds are only claims until they are measured. The experiment generates every prompt in `prompts/experiment_prompts.txt` in both modes at chosen lengths, scores each text, and logs one history row per generation under a batch id. The summary per (mode, length) reports:
+
+- **flagged rate**: for watermarked rows the true-positive rate, for normal rows the false-positive rate, both at `detection_threshold`;
+- the share at or above `possible_threshold`, the share INCONCLUSIVE, mean z, mean green %, and how many rows failed the token round trip (`gen_tokens − context_width + 1 ≠ tokens_scored`).
+
+```bash
+# quick smoke, about 10 minutes on a CPU
+python experiment.py --prompts 3 --lengths 50 150 300
+
+# the demo batch: 100 prompts x 150 tokens x 2 modes, about 1 h 40 min
+python experiment.py --lengths 150 --seed 100
+
+# the full grid, about 5 hours; interrupt with Ctrl-C and continue later
+python experiment.py --lengths 50 150 300 --seed 100
+python experiment.py --resume <batch_id>
+```
+
+Every row is written as soon as it exists, so an interrupted batch loses at most one generation; `--resume` skips finished cells. Each cell's seed is derived from the seed base and the cell itself (prompt, length, mode, run), so a batch can be repeated exactly and extended with more lengths without changing existing cells. The summary is exported to `logs/exports/experiment_<batch_id>_summary.csv` and shown in the web app's Experiment tab.
+
+Measured results: see the table at the end of this file once the demo batch has run.
 
 ## Limitations
 
@@ -133,8 +161,8 @@ Four tabs in both front-ends:
 - **Purpose and target users**: an educational provenance demo and verifier for lecturers, students and researchers; see "Purpose and users".
 - **Main features**: generation in two modes, detection with a calibrated statistic, saving with metadata, history with analysis.
 - **Files/data**: JSON (config, sidecars), TXT (generations), CSV (history, exports), safetensors weights read by the library.
-- **File handling**: reads, creates, appends, backs up, exports and organises those files; see "File handling".
-- **ML/NLP component**: a pretrained causal language model, a sampling-time watermark, and a statistical detector, all via Hugging Face Transformers.
+- **File handling**: reads, creates, appends, updates and deletes single records, backs up, migrates, exports and organises those files; see "File handling".
+- **ML/NLP component**: a pretrained causal language model, a sampling-time watermark, a statistical detector, and an experiment that measures the detector's error rates, all via Hugging Face Transformers.
 
 ## References
 

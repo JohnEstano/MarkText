@@ -104,6 +104,7 @@ class App(tk.Tk):
         self.det_too_short = False
         self.detect_filename = ""
         self.detect_loaded_text = ""
+        self.detect_sidecar = None
 
         self._ensure_dirs()
         history.ensure_history()
@@ -288,18 +289,20 @@ class App(tk.Tk):
         bf.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
         ttk.Button(bf, text="Refresh", command=self._refresh_history).pack(side="left", padx=4)
         ttk.Button(bf, text="Clear History", command=self._clear_history).pack(side="left", padx=4)
-        ttk.Label(bf, text="Filtering, charts and export: run the web app "
-                           "(streamlit run app.py).",
+        ttk.Label(bf, text="Filtering, charts, export, record editing and the batch "
+                           "experiment: run the web app (streamlit run app.py).",
                   foreground="#555").pack(side="left", padx=12)
 
         tf = ttk.Frame(f)
         tf.grid(row=1, column=0, sticky="nsew", padx=12, pady=6)
 
-        cols = ("time", "file", "tokens", "green", "z", "result")
+        cols = ("id", "time", "source", "file", "mode", "tokens", "green", "z", "p", "result")
         self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=18)
-        hdr = {"time": "Date / Time", "file": "Filename", "tokens": "Tokens",
-               "green": "Green %", "z": "Z-score", "result": "Result"}
-        wds = {"time": 155, "file": 200, "tokens": 80, "green": 90, "z": 80, "result": 190}
+        hdr = {"id": "Run id", "time": "Date / Time", "source": "Source", "file": "Filename",
+               "mode": "Mode", "tokens": "Tokens", "green": "Green %", "z": "Z-score",
+               "p": "p-value", "result": "Result"}
+        wds = {"id": 80, "time": 140, "source": 70, "file": 170, "mode": 90, "tokens": 65,
+               "green": 70, "z": 65, "p": 80, "result": 180}
         for c in cols:
             self.tree.heading(c, text=hdr[c])
             self.tree.column(c, width=wds[c], anchor="w")
@@ -510,6 +513,7 @@ class App(tk.Tk):
         self.detect_filename = p.name
         self.detect_loaded_text = text.strip()
         side = read_sidecar(p)
+        self.detect_sidecar = side
         self.det_source_var.set("{} ({} mode, seed {})".format(
             p.name, side.get("mode", "?"), side.get("seed", "?")) if side else p.name)
 
@@ -565,9 +569,17 @@ class App(tk.Tk):
 
         # the file name applies only while the box still holds that file's text
         unchanged = self.detect_filename and text == self.detect_loaded_text
-        filename = self.detect_filename if unchanged else "manual_input"
+        extra = {}
+        if unchanged and self.detect_sidecar:
+            side = self.detect_sidecar
+            extra = {"mode": side.get("mode", ""), "seed": side.get("seed", ""),
+                     "max_new_tokens": side.get("max_new_tokens", ""),
+                     "gen_tokens": side.get("new_tokens", "")}
         try:
-            history.append_history(filename, stats)
+            history.append_history(stats,
+                                   source="file" if unchanged else "manual",
+                                   filename=self.detect_filename if unchanged else "",
+                                   extra=extra)
         except OSError as exc:
             messagebox.showerror("History Not Saved",
                                  "The result is shown but could not be logged "
@@ -581,6 +593,7 @@ class App(tk.Tk):
         self.input_text.delete("1.0", "end")
         self.detect_filename = ""
         self.detect_loaded_text = ""
+        self.detect_sidecar = None
         self.det_source_var.set("")
         for v in self.det_vars.values():
             v.set("—")
@@ -593,17 +606,21 @@ class App(tk.Tk):
             self.tree.delete(item)
         try:
             rows = history.read_history()
-        except (OSError, csv.Error, UnicodeDecodeError) as exc:
+        except (OSError, csv.Error, UnicodeDecodeError, ValueError) as exc:
             messagebox.showerror("History Error",
                                  "Could not read the history CSV:\n" + str(exc))
             return
         for row in rows:
             self.tree.insert("", "end", values=(
+                row.get("run_id", ""),
                 row.get("timestamp", ""),
+                row.get("source", ""),
                 row.get("filename", ""),
+                row.get("mode", ""),
                 row.get("tokens_scored", ""),
-                row.get("green_fraction", ""),
+                row.get("green_pct", ""),
                 row.get("z_score", ""),
+                row.get("p_value", ""),
                 row.get("result", ""),
             ))
 

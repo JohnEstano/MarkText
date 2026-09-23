@@ -177,6 +177,7 @@ class Engine:
 
         tokens_scored = int(result.num_tokens_scored[0])
         z = float(result.z_score[0])
+        wm = self.config["watermark"]
         return {
             "num_tokens_scored": tokens_scored,
             "num_green_tokens": int(result.num_green_tokens[0]),
@@ -186,4 +187,13 @@ class Engine:
             "p_value": float(result.p_value[0]),
             "confidence": float(result.confidence[0]),
             "label": classify(z, tokens_scored, self.config),
+            # context the score was produced under, for the history log
+            "input_tokens": int(ids.shape[1]),
+            "device": self.device,
+            "watermark": {
+                "bias": wm["bias"],
+                "greenlist_ratio": wm["greenlist_ratio"],
+                "seeding_scheme": wm["seeding_scheme"],
+                "context_width": wm["context_width"],
+            },
         }

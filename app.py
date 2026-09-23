@@ -16,11 +16,14 @@ import datetime
 import json
 import pathlib
 import threading
+import time
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
 import config as cfg
+import experiment
 import history
 from engine import (
     Engine, LABEL_INCONCLUSIVE, LABEL_LIKELY, LABEL_NOT_DETECTED, LABEL_POSSIBLE,
@@ -109,7 +112,9 @@ def load_history_df():
         df = pd.read_csv(history.HISTORY_PATH, parse_dates=["timestamp"], encoding="utf-8")
     except pd.errors.EmptyDataError:
         return pd.DataFrame(columns=history.COLUMNS)
-    df["filename"] = df["filename"].fillna("")
+    for c in ("filename", "mode", "batch_id", "source", "note", "seeding_scheme"):
+        df[c] = df[c].fillna("").astype(str)
+    df["run_id"] = df["run_id"].astype(str)
     return df
 
 
@@ -121,16 +126,28 @@ def export_csv(df, stem):
     return path
 
 
-def summarise(df):
+def summarise(df, by=("result",)):
+    by = list(by)
     if df.empty:
-        return pd.DataFrame(columns=["result", "analyses", "mean_z",
-                                     "mean_green_pct", "mean_tokens"])
-    return (df.groupby("result")
+        return pd.DataFrame(columns=by + ["analyses", "mean_z", "mean_green_pct", "mean_tokens"])
+    return (df.groupby(by)
               .agg(analyses=("z_score", "count"),
                    mean_z=("z_score", "mean"),
-                   mean_green_pct=("green_fraction", "mean"),
+                   mean_green_pct=("green_pct", "mean"),
                    mean_tokens=("tokens_scored", "mean"))
               .reset_index())
+
+
+def z_chart(df, threshold):
+    """Scatter of z vs tokens with a rule at the detection threshold."""
+    base = alt.Chart(df).mark_circle(size=70).encode(
+        x=alt.X("tokens_scored:Q", title="tokens scored"),
+        y=alt.Y("z_score:Q", title="z-score"),
+        color=alt.Color("result:N", title="result"),
+        tooltip=["run_id", "source", "mode", "tokens_scored", "z_score", "result"])
+    rule = alt.Chart(pd.DataFrame({"z": [threshold]})).mark_rule(
+        strokeDash=[6, 4], color="#cc0000").encode(y="z:Q")
+    return (base + rule).properties(height=320).interactive()
 
 
 # ---------------------------------------------------------------- callbacks
@@ -185,6 +202,29 @@ def on_export(key, stem):
         state["export_error"] = "Export failed: {}".format(exc)
 
 
+def on_update_record():
+    state = st.session_state
+    rid = state.get("manage_id", "").strip()
+    try:
+        backup = history.update_record(rid, note=state.get("manage_note", ""),
+                                       filename=state.get("manage_filename", ""))
+        state["history_msg"] = "Record {} updated. Backup: {}".format(rid, backup)
+    except (ValueError, OSError) as exc:
+        state["history_msg"] = "Record NOT updated: {}".format(exc)
+
+
+def on_delete_record():
+    state = st.session_state
+    rid = state.get("manage_id", "").strip()
+    try:
+        backup = history.delete_record(rid)
+        state["history_msg"] = "Record {} deleted. Backup: {}".format(rid, backup)
+        state["manage_id"] = ""
+    except (ValueError, OSError) as exc:
+        state["history_msg"] = "Record NOT deleted: {}".format(exc)
+    state["confirm_delete"] = False
+
+
 def on_clear_history():
     state = st.session_state
     try:
@@ -218,6 +258,7 @@ for key, default in (
     ("detect_stats", None), ("upload_error", ""), ("history_msg", ""),
     ("export_msg", ""), ("export_error", ""),
     ("export_rows", None), ("export_summary", None),
+    ("exp_msg", ""), ("exp_batch", ""), ("exp_summary_export", None),
 ):
     state.setdefault(key, default)
 
@@ -229,8 +270,8 @@ except Exception as exc:
 
 st.caption("Ready — {} on {}".format(config["model_id"], engine.device))
 
-tab_gen, tab_det, tab_hist, tab_about = st.tabs(
-    ["Generate", "Detect", "History", "About"])
+tab_gen, tab_det, tab_hist, tab_exp, tab_about = st.tabs(
+    ["Generate", "Detect", "History", "Experiment", "About"])
 
 # ----- TAB 1 — GENERATE
 with tab_gen:
@@ -322,9 +363,10 @@ with tab_det:
                     state["detect_stats"] = stats
                     # the file name only applies if the box still holds that file
                     unchanged = state["detect_filename"] and text == state["detect_loaded"]
-                    filename = state["detect_filename"] if unchanged else "manual_input"
                     try:
-                        history.append_history(filename, stats)
+                        history.append_history(
+                            stats, source="file" if unchanged else "manual",
+                            filename=state["detect_filename"] if unchanged else "")
                     except OSError as exc:
                         col_in.error("Result shown but NOT logged; could not write "
                                      "the history CSV (is it open in Excel?): "
@@ -380,8 +422,15 @@ with tab_hist:
         dates = f3.date_input("Date range", (dmin, dmax), min_value=dmin, max_value=dmax)
         tmax = int(df["tokens_scored"].max())
         min_tok = f4.number_input("Min tokens", 0, tmax, 0, step=10)
+        g1, g2 = st.columns(2)
+        sources = sorted(df["source"].unique())
+        pick_src = g1.multiselect("Source", sources, default=sources)
+        batches = ["(all)"] + sorted(b for b in df["batch_id"].unique() if b)
+        pick_batch = g2.selectbox("Batch", batches)
 
-        mask = df["result"].isin(pick)
+        mask = df["result"].isin(pick) & df["source"].isin(pick_src)
+        if pick_batch != "(all)":
+            mask &= df["batch_id"] == pick_batch
         if query:
             mask &= df["filename"].str.contains(query, case=False, na=False)
         if isinstance(dates, tuple) and len(dates) == 2:
@@ -404,11 +453,13 @@ with tab_hist:
             st.warning("No records match the filters.")
         else:
             st.subheader("Z-score vs tokens analysed")
-            st.scatter_chart(filtered, x="tokens_scored", y="z_score", color="result",
-                             x_label="tokens scored", y_label="z-score")
+            st.altair_chart(z_chart(filtered, float(config["detection_threshold"])),
+                            width="stretch")
+            st.caption("Dashed line: detection_threshold = {}".format(config["detection_threshold"]))
 
-            summary = summarise(filtered)
-            st.subheader("Summary by result")
+            has_modes = (filtered["mode"] != "").any()
+            summary = summarise(filtered, ("mode", "result") if has_modes else ("result",))
+            st.subheader("Summary by {}result".format("mode and " if has_modes else ""))
             st.dataframe(summary, hide_index=True, width="stretch",
                          column_config={
                              "mean_z": st.column_config.NumberColumn(format="%.2f"),
@@ -421,9 +472,10 @@ with tab_hist:
                          column_config={
                              "timestamp": st.column_config.DatetimeColumn(
                                  format="YYYY-MM-DD HH:mm:ss"),
-                             "green_fraction": st.column_config.NumberColumn(
+                             "green_pct": st.column_config.NumberColumn(
                                  "green %", format="%.2f"),
-                             "z_score": st.column_config.NumberColumn(format="%.2f")})
+                             "z_score": st.column_config.NumberColumn(format="%.2f"),
+                             "p_value": st.column_config.NumberColumn(format="%.2e")})
 
             # export: the app writes a new csv under logs/exports/ and the
             # browser downloads a copy; the history file itself is never edited
@@ -439,15 +491,131 @@ with tab_hist:
                                file_name="history_summary.csv", mime="text/csv",
                                on_click=on_export, args=("export_summary", "history_summary"))
 
+        # --- one record at a time, by run_id (backup before every write)
+        with st.expander("Manage one record (by run_id)"):
+            st.text_input("run_id", key="manage_id")
+            rid = state.get("manage_id", "").strip()
+            rec = history.find_record(rid) if rid else None
+            if rid and rec is None:
+                st.warning("No record with run_id {!r}.".format(rid))
+            if rec:
+                st.dataframe(pd.DataFrame([rec]), hide_index=True, width="stretch")
+                st.text_input("filename", value=rec.get("filename", ""), key="manage_filename")
+                st.text_input("note", value=rec.get("note", ""), key="manage_note")
+                st.caption("Only note and filename can change; measurements are immutable. "
+                           "A backup is written before any change.")
+                c1, c2 = st.columns(2)
+                c1.button("Save changes", on_click=on_update_record)
+                confirm_del = c2.checkbox("Yes, delete this record", key="confirm_delete")
+                c2.button("Delete record", disabled=not confirm_del, on_click=on_delete_record)
+
         st.caption("{} analyses in {} - writes go through history.py (csv module); "
-                   "this tab only reads. Per-record edit/delete needs a unique id "
-                   "column (planned).".format(len(df), history.HISTORY_PATH))
+                   "this tab reads with pandas and writes only new files.".format(
+                       len(df), history.HISTORY_PATH))
         confirm = st.checkbox("Yes, clear all detection records "
                               "(a backup copy is written to logs/exports/ first)",
                               key="confirm_clear")
         st.button("Clear History", disabled=not confirm, on_click=on_clear_history)
 
-# ----- TAB 4 — ABOUT
+# ----- TAB 4 — EXPERIMENT
+with tab_exp:
+    st.markdown("Measure detection instead of demonstrating it: every prompt is generated "
+                "in both modes, scored, and logged as a history row tagged with a batch id. "
+                "The summary gives the **true-positive rate** (watermarked rows flagged) and "
+                "the **false-positive rate** (normal rows flagged) per length.")
+    if state["exp_msg"]:
+        st.info(state["exp_msg"])
+        state["exp_msg"] = ""
+
+    try:
+        all_prompts = experiment.load_prompts()
+    except OSError as exc:
+        all_prompts = []
+        st.error("Could not read {}: {}".format(experiment.PROMPT_FILE, exc))
+
+    x1, x2, x3, x4 = st.columns(4)
+    n_prompts = x1.number_input("Prompts (of {})".format(len(all_prompts)),
+                                1, max(len(all_prompts), 1), min(100, max(len(all_prompts), 1)))
+    lengths = x2.multiselect("Lengths (max tokens)", [50, 150, 300, 500], default=[150])
+    runs = x3.number_input("Runs per cell", 1, 5, 1)
+    seed_base = x4.number_input("Seed base", 0, 10_000_000, 100)
+    known = experiment.known_batches()
+    resume = st.selectbox("Resume an existing batch (skips finished cells)",
+                          ["(new batch)"] + ["{} ({} rows)".format(b, n) for b, n in sorted(known.items())])
+    total = int(n_prompts) * len(lengths) * 2 * int(runs)
+    est_s = sum(int(n_prompts) * int(runs) * L * (1 / 4.3 + 1 / 8.0) for L in lengths)
+    st.caption("{} generations, roughly {:.0f} min on this CPU. For runs over an hour use the "
+               "command line, which can be interrupted and resumed:  "
+               "`python experiment.py --lengths {} --runs {} --seed {}`".format(
+                   total, est_s / 60, " ".join(str(L) for L in lengths), int(runs), int(seed_base)))
+
+    run_col, stop_col = st.columns([1, 3])
+    start = run_col.button("Run experiment", type="primary", disabled=not lengths or not all_prompts)
+    if start:
+        cancel = threading.Event()
+        stop_col.button("Stop after the current generation", on_click=cancel.set)
+        bar = st.progress(0.0)
+        status = st.empty()
+        t0 = time.time()
+
+        def progress(done, total, row):
+            bar.progress(done / total)
+            eta = (time.time() - t0) / max(done, 1) * (total - done)
+            status.write("{}/{}  p{} L{} {}  z={:.2f} {}  (eta {:.0f} min)".format(
+                done, total, row["prompt_idx"], row["length"], row["mode"],
+                row["z"], row["label"], eta / 60))
+
+        batch_id = None if resume == "(new batch)" else resume.split(" ")[0]
+        try:
+            with st.status("Running batch...", expanded=True):
+                batch_id = experiment.run_batch(
+                    engine, all_prompts[:int(n_prompts)], lengths, int(runs),
+                    seed_base=int(seed_base) if batch_id is None else None,
+                    batch_id=batch_id, on_progress=progress, cancel_event=cancel,
+                    lock=engine_lock)
+            state["exp_batch"] = batch_id
+            state["exp_msg"] = "Batch {} finished{}.".format(
+                batch_id, " (stopped early)" if cancel.is_set() else "")
+        except (OSError, ValueError) as exc:
+            st.error("Experiment failed: {}".format(exc))
+
+    st.subheader("Results")
+    known = experiment.known_batches()
+    if not known:
+        st.write("No batches yet.")
+    else:
+        choices = sorted(known, reverse=True)
+        default = state["exp_batch"] if state["exp_batch"] in choices else choices[0]
+        show = st.selectbox("Batch", choices, index=choices.index(default))
+        bdf = experiment.batch_frame(show)
+        summary = experiment.summarise_batch(bdf, config)
+        try:
+            settings = experiment.read_settings(show)
+            st.caption("{} rows; created {}; prompt file hash {}; seed base {}; lengths {}".format(
+                len(bdf), settings.get("created"), settings.get("prompt_file_hash"),
+                settings.get("seed_base"), settings.get("lengths")))
+        except (OSError, ValueError):
+            st.caption("{} rows (no settings file for this batch)".format(len(bdf)))
+        st.dataframe(summary, hide_index=True, width="stretch",
+                     column_config={"mean_z": st.column_config.NumberColumn(format="%.2f"),
+                                    "mean_green_pct": st.column_config.NumberColumn(format="%.1f"),
+                                    "flagged_rate": st.column_config.NumberColumn(format="%.0%%"),
+                                    "possible_or_above_rate": st.column_config.NumberColumn(format="%.0%%"),
+                                    "inconclusive_rate": st.column_config.NumberColumn(format="%.0%%")})
+        if not bdf.empty:
+            st.altair_chart(z_chart(bdf.assign(result=bdf["mode"] + " / " + bdf["result"]),
+                                    float(config["detection_threshold"])), width="stretch")
+        state["exp_summary_export"] = summary
+        st.download_button("Export batch summary (CSV)",
+                           data=summary.to_csv(index=False).encode("utf-8"),
+                           file_name="experiment_{}_summary.csv".format(show), mime="text/csv",
+                           on_click=on_export, args=("exp_summary_export", "experiment_{}_summary".format(show)))
+        if state["export_msg"]:
+            st.success(state["export_msg"])
+            state["export_msg"] = ""
+
+
+# ----- TAB 5 — ABOUT
 with tab_about:
     st.markdown(read_readme())
     with st.expander("Current configuration (config/watermark_config.json)"):
