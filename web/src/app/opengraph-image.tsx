@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { MARK_VIEWBOX, LEG_LEFT, LEG_RIGHT, RING, STEM } from "@/components/mark-paths";
 
 export const alt = "MarkText: watermark text you generate. Prove it later.";
 export const size = { width: 1200, height: 630 };
@@ -23,13 +24,12 @@ export default function OpenGraphImage() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
-          <svg width="112" height="112" viewBox="0 0 32 32">
-            <polyline points="5.5,30 5.5,8.5 13,20" fill="none" stroke="#18181b" strokeWidth="5" strokeLinejoin="miter" strokeMiterlimit="6" />
-            <polyline points="26.5,30 26.5,8.5 19,20" fill="none" stroke="#18181b" strokeWidth="5" strokeLinejoin="miter" strokeMiterlimit="6" />
-            <circle cx="16" cy="5" r="3.2" fill="none" stroke="#2f7d5b" strokeWidth="2.4" />
-            <line x1="16" y1="8.2" x2="16" y2="30" stroke="#2f7d5b" strokeWidth="3.4" />
-            <rect x="17.7" y="24" width="3.3" height="2.6" fill="#2f7d5b" />
-          </svg>
+          <svg width="112" height="112" viewBox={MARK_VIEWBOX}>
+          <path d={LEG_LEFT} fill="#18181b" />
+          <path d={LEG_RIGHT} fill="#18181b" />
+          <circle cx={RING.cx} cy={RING.cy} r={RING.r} fill="none" stroke="#2f7d5b" strokeWidth={RING.width} />
+          <line x1={STEM.x} y1={STEM.y1} x2={STEM.x} y2={STEM.y2} stroke="#2f7d5b" strokeWidth={STEM.width} strokeLinecap="round" />
+        </svg>
           <div style={{ fontSize: 88, fontWeight: 600 }}>MarkText</div>
         </div>
         <div style={{ marginTop: 48, fontSize: 44, maxWidth: 900, lineHeight: 1.2 }}>

@@ -1,4 +1,5 @@
 import { ImageResponse } from "next/og";
+import { MARK_VIEWBOX, LEG_LEFT, LEG_RIGHT, RING, STEM } from "@/components/mark-paths";
 
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
@@ -9,12 +10,11 @@ export default function AppleIcon() {
   return new ImageResponse(
     (
       <div style={{ width: 180, height: 180, background: "#fafafa", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <svg width="132" height="132" viewBox="0 0 32 32">
-          <polyline points="5.5,30 5.5,8.5 13,20" fill="none" stroke="#18181b" strokeWidth="5" strokeLinejoin="miter" strokeMiterlimit="6" />
-          <polyline points="26.5,30 26.5,8.5 19,20" fill="none" stroke="#18181b" strokeWidth="5" strokeLinejoin="miter" strokeMiterlimit="6" />
-          <circle cx="16" cy="5" r="3.2" fill="none" stroke="#2f7d5b" strokeWidth="2.4" />
-          <line x1="16" y1="8.2" x2="16" y2="30" stroke="#2f7d5b" strokeWidth="3.4" />
-          <rect x="17.7" y="24" width="3.3" height="2.6" fill="#2f7d5b" />
+        <svg width="132" height="132" viewBox={MARK_VIEWBOX}>
+          <path d={LEG_LEFT} fill="#18181b" />
+          <path d={LEG_RIGHT} fill="#18181b" />
+          <circle cx={RING.cx} cy={RING.cy} r={RING.r} fill="none" stroke="#2f7d5b" strokeWidth={RING.width} />
+          <line x1={STEM.x} y1={STEM.y1} x2={STEM.x} y2={STEM.y2} stroke="#2f7d5b" strokeWidth={STEM.width} strokeLinecap="round" />
         </svg>
       </div>
     ),
