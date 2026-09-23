@@ -1,15 +1,18 @@
-"""Detection history logging for MarkText.
+"""Detection history log for MarkText (was detector.py).
 
-Every analysis appends one row to logs/detection_history.csv.
-This demonstrates the UPDATE / APPEND pattern on a CSV file.
+Every analysis appends one row to logs/detection_history.csv with the
+csv module. This module never classifies: the verdict label comes from
+Engine.detect(), so both front-ends and the log agree by construction.
 """
 
 import csv
 import datetime
 import pathlib
+import shutil
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 HISTORY_PATH = BASE_DIR / "logs" / "detection_history.csv"
+EXPORT_DIR = BASE_DIR / "logs" / "exports"
 
 COLUMNS = [
     "timestamp",
@@ -30,42 +33,45 @@ def ensure_history():
 
 
 def append_history(filename, stats):
+    """Append one row. Raises OSError if the file cannot be written
+    (for example while it is open in Excel); callers report that."""
     ensure_history()
     row = {
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "filename": filename,
+        "filename": filename or "manual_input",
         "tokens_scored": stats.get("num_tokens_scored", 0),
         "green_tokens": stats.get("num_green_tokens", 0),
         "green_fraction": round(stats.get("green_fraction", 0.0) * 100, 2),
         "z_score": round(stats.get("z_score", 0.0), 2),
-        "result": classify_z(stats.get("z_score", 0.0)),
+        "result": stats.get("label", ""),
     }
     with open(HISTORY_PATH, "a", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=COLUMNS).writerow(row)
 
 
-def classify_z(z):
-    if z >= 4.0:
-        return "LIKELY MARKTEXT"
-    if z >= 2.0:
-        return "POSSIBLE WATERMARK"
-    return "NO WATERMARK"
-
-
 def read_history():
+    """All rows, newest first. Raises OSError, csv.Error or UnicodeDecodeError
+    on a bad file rather than pretending the history is empty."""
     ensure_history()
-    rows = []
-    try:
-        with open(HISTORY_PATH, "r", newline="", encoding="utf-8") as f:
-            for row in csv.DictReader(f):
-                rows.append(row)
-    except (OSError, csv.Error):
-        return []
+    with open(HISTORY_PATH, "r", newline="", encoding="utf-8") as f:
+        rows = list(csv.DictReader(f))
     rows.reverse()
     return rows
 
 
-def clear_history():
+def backup_history():
+    """Copy the current history file into logs/exports/ and return the path."""
     ensure_history()
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup = EXPORT_DIR / "detection_history_backup_{}.csv".format(stamp)
+    shutil.copyfile(HISTORY_PATH, backup)
+    return backup
+
+
+def clear_history():
+    """Back up the file, then truncate it to the header. Returns the backup path."""
+    backup = backup_history()
     with open(HISTORY_PATH, "w", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=COLUMNS).writeheader()
+    return backup

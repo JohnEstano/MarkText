@@ -1,13 +1,14 @@
-# MarkText dependencies (all installed via pip)
-# Python 3.11+ is required.
+# MarkText dependencies (all installed via pip). Python 3.11+.
 #
-# Install with:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu
-#   pip install transformers streamlit
+#   pip install -r requirements.txt
 #
-# On first run, Hugging Face will download Qwen2.5-0.5B-Instruct (~500 MB)
-# into the HF cache (default: ~/.cache/huggingface/hub).
+# First run downloads Qwen2.5-0.5B-Instruct (about 1 GB) into the Hugging
+# Face cache (default: ~/.cache/huggingface/hub).
 
-torch
-transformers
-streamlit
+torch>=2.4
+transformers>=5.0
+streamlit>=1.50
+pandas>=2.2
+
+# tests:  pip install pytest   then   pytest -q

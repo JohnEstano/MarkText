@@ -1,5 +1,0 @@
-Cryptography is the science and art of concealing or protecting information so that it can be shared with authorized recipients only. Its historical roots go back thousands of years, spanning different civilizations and cultures around the world.
-
-The concept of cryptography dates back to ancient times in various forms. In Ancient Egypt, for example, ciphers were used to transmit messages between kings and nobles. Similarly, during the Middle Ages, the use of modular arithmetic and the use of numerical tables for multiplication became standard methods for cryptographic operations.
-
-In the Renaissance period (15th-17th centuries), the study of cryptography developed further as mathematicians like Fermat made significant contributions to the field. One of his notable works was "L'Art du Coder," which

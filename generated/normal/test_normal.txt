@@ -1,5 +1,0 @@
-Cryptography is the study of methods and tools for securing information and communications from unauthorized access or interception. Its origins can be traced back to ancient civilizations, where codes were used to protect trade secrets and religious texts.
-
-The first known use of encryption dates back to ancient Greece, where Caesar's code was developed in 54 BC for the Roman Senate. This code involved using numerical shifts on letters to encode messages. The Romans also invented ciphers like the Caesar Cipher, which uses a series of letter substitutions to encrypt messages.
-
-The term "cryptography" itself comes from the Greek words for "secret" (kryptos) and "writing" (glossis). It refers to the practice of encoding or hiding information so that only those who possess

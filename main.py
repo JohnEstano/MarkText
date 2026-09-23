@@ -6,67 +6,74 @@ Four-tab Tkinter desktop application:
   1) Generate — prompt the model, normal or watermarked
   2) Detect   — check text for MarkText's watermark
   3) History  — browse / clear detection log
-  4) About    — description and limitations
+  4) About    — the project README
+
+Threading rule: anything slow (model load, generation, detection) runs in
+a daemon thread. Workers only write results to attributes on the App or
+to a queue; the main thread polls with after() and is the only thread
+that touches widgets.
 """
 
+import csv
+import datetime
+import json
 import pathlib
+import queue
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 import config as cfg
-import detector
-from engine import Engine
+import history
+from engine import (
+    Engine, LABEL_INCONCLUSIVE, LABEL_LIKELY, LABEL_NOT_DETECTED, LABEL_POSSIBLE,
+)
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 GENERATED_DIR = BASE_DIR / "generated"
+README_PATH = BASE_DIR / "README.md"
 
-ABOUT_TEXT = """\
+MIN_TOKENS = 50
+MAX_TOKENS = 2000
+
+LABEL_COLORS = {
+    LABEL_LIKELY: "#cc0000",
+    LABEL_POSSIBLE: "#cc8800",
+    LABEL_NOT_DETECTED: "#228822",
+    LABEL_INCONCLUSIVE: "#555555",
+}
+
+ABOUT_FALLBACK = """\
 MarkText — Watermarking and Detection of LLM-Generated Text
 
-DESCRIPTION
-
-MarkText demonstrates how generated text can carry an invisible statistical
-watermark using the Kirchenbauer et al. green/red list algorithm (2023). The
-system wraps a pretrained causal language model (Qwen2.5) with a deterministic
-logits processor that biases generation toward green tokens. A separate
-detector can later verify the watermark using only the secret key.
-
-LIMITATIONS
-
-- MarkText detects ONLY text it generated with its own watermark key.
-  It is NOT a universal AI-text detector.
-- Detection requires the same watermark parameters used during generation.
-- Enough text is needed for statistics to be meaningful (200+ tokens ideal).
-- Editing, paraphrasing, or heavily rewriting text can weaken detection.
-- The underlying model (Qwen2.5) generates text based on its training data.
-
-TECHNOLOGY
-
-  Model:           Qwen2.5 (Hugging Face Hub)
-  Watermarking:    Kirchenbauer et al. 2023 — green/red list via HF
-                   WatermarkingConfig and WatermarkDetector
-  GUI:             Tkinter + ttk
-  Processing:      Fully local after model download
-
-FILES
-
-  config/watermark_config.json   Watermark parameters (JSON)
-  generated/normal/*.txt         Unwatermarked text
-  generated/watermarked/*.txt    Watermarked text
-  logs/detection_history.csv     Detection log (CSV)
-
-ASSIGNMENT REQUIREMENTS MAPPING
-
-  ML / NLP              Pretrained causal language model (Qwen2.5) +
-                        established watermarking algorithm
-  Python                Hugging Face Transformers + PyTorch + custom logic
-  File handling         JSON config, TXT export, CSV detection log,
-                        HF model cache (serialized weights)
-  Topic                 Provenance and identification of generative AI output
-  No cloud API          Fully local after model download
-  No LLM training       Avoids enormous compute
+README.md was not found next to main.py. See the project repository for
+the full description. MarkText detects ONLY text it generated with its own
+watermark key and parameters; it is NOT a universal AI-text detector.
 """
+
+
+def write_sidecar(txt_path, info):
+    """Write <name>.json next to a saved text: mode, seed, parameters."""
+    side = txt_path.with_suffix(".json")
+    record = dict(info)
+    record.pop("text", None)
+    record["saved_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    record["text_file"] = txt_path.name
+    with open(side, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=4)
+    return side
+
+
+def read_sidecar(txt_path):
+    side = txt_path.with_suffix(".json")
+    if not side.exists():
+        return None
+    try:
+        with open(side, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else None
+    except (OSError, json.JSONDecodeError):
+        return None
 
 
 class App(tk.Tk):
@@ -76,15 +83,33 @@ class App(tk.Tk):
         self.geometry("960x740")
         self.minsize(840, 640)
 
-        self.config = cfg.load_config()
+        # `settings`, not `config`: tk.Tk.config is a Tk method (alias of configure)
+        self.config_notes = []
+        try:
+            self.settings = cfg.load_config(notes=self.config_notes)
+        except ValueError as exc:
+            messagebox.showerror("Configuration Error", str(exc))
+            raise
+
+        # all cross-thread state exists from the start
         self.engine = None
-        self._gen_ok = True
-        self._gen_result = ""
+        self.load_state = "loading"          # loading | ready | failed
+        self.load_error = ""
+        self.progress_queue = queue.Queue()
+        self.gen_result = None               # dict from Engine.generate
+        self.gen_error = ""
+        self.gen_cancel = threading.Event()
+        self.det_result = None               # dict from Engine.detect, or None
+        self.det_error = ""
+        self.det_too_short = False
+        self.detect_filename = ""
+        self.detect_loaded_text = ""
 
         self._ensure_dirs()
-        detector.ensure_history()
+        history.ensure_history()
 
         self._build_ui()
+        self._show_config_notes()
         self._load_engine_async()
 
     # ---------------------------------------------------------------- dirs
@@ -96,6 +121,10 @@ class App(tk.Tk):
             BASE_DIR / "logs",
         ):
             d.mkdir(parents=True, exist_ok=True)
+
+    def _show_config_notes(self):
+        if self.config_notes:
+            messagebox.showwarning("Configuration", "\n\n".join(self.config_notes))
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
@@ -142,10 +171,13 @@ class App(tk.Tk):
         sf.grid(row=2, column=0, columnspan=4, sticky="ew", padx=12, pady=4)
 
         ttk.Label(sf, text="Max tokens:").pack(side="left", padx=(0, 4))
-        self.max_tokens_var = tk.StringVar(value="300")
-        ttk.Spinbox(sf, from_=50, to=2000, width=7,
+        default_tokens = min(max(int(self.settings.get("max_new_tokens", 300)),
+                                 MIN_TOKENS), MAX_TOKENS)
+        self.max_tokens_var = tk.StringVar(value=str(default_tokens))
+        ttk.Spinbox(sf, from_=MIN_TOKENS, to=MAX_TOKENS, width=7,
                      textvariable=self.max_tokens_var).pack(side="left")
-        ttk.Label(sf, text="(50–2000)").pack(side="left", padx=(2, 14))
+        ttk.Label(sf, text="({}–{})".format(MIN_TOKENS, MAX_TOKENS)).pack(
+            side="left", padx=(2, 14))
 
         self.mode_var = tk.StringVar(value="watermarked")
         ttk.Radiobutton(sf, text="Normal", variable=self.mode_var,
@@ -155,6 +187,9 @@ class App(tk.Tk):
 
         self.gen_btn = ttk.Button(sf, text="Generate", command=self._start_generate)
         self.gen_btn.pack(side="left", padx=(18, 0))
+        self.cancel_btn = ttk.Button(sf, text="Cancel", command=self._cancel_generate,
+                                     state="disabled")
+        self.cancel_btn.pack(side="left", padx=4)
 
         ttk.Label(f, text="Output:").grid(row=3, column=0, sticky="w", padx=12, pady=(6, 0))
         of = ttk.Frame(f)
@@ -186,8 +221,12 @@ class App(tk.Tk):
         bf = ttk.Frame(f)
         bf.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(10, 4))
         ttk.Button(bf, text="Open TXT", command=self._open_for_detect).pack(side="left", padx=4)
-        ttk.Button(bf, text="Analyze", command=self._analyze).pack(side="left", padx=4)
+        self.analyze_btn = ttk.Button(bf, text="Analyze", command=self._analyze)
+        self.analyze_btn.pack(side="left", padx=4)
         ttk.Button(bf, text="Clear", command=self._clear_detect).pack(side="left", padx=4)
+        self.det_source_var = tk.StringVar(value="")
+        ttk.Label(bf, textvariable=self.det_source_var,
+                  foreground="#555").pack(side="left", padx=12)
 
         inf = ttk.LabelFrame(f, text=" Text to Analyze ")
         inf.grid(row=1, column=0, sticky="nsew", padx=(12, 6), pady=6)
@@ -208,6 +247,7 @@ class App(tk.Tk):
             ("green", "Green tokens"),
             ("signal", "Watermark signal"),
             ("zscore", "Z-score"),
+            ("pvalue", "p-value"),
         ]
         for i, (key, text) in enumerate(labels):
             ttk.Label(rf, text=text + ":", anchor="w", width=18).grid(
@@ -217,21 +257,24 @@ class App(tk.Tk):
             ttk.Label(rf, textvariable=var, anchor="w",
                       foreground="#2255aa").grid(row=i, column=1, sticky="w", padx=8, pady=3)
 
+        row = len(labels)
         ttk.Label(rf, text="Result:", anchor="w", width=18).grid(
-            row=4, column=0, sticky="w", padx=8, pady=3)
+            row=row, column=0, sticky="w", padx=8, pady=3)
         self.det_result_var = tk.StringVar(value="—")
         self.det_result_lbl = ttk.Label(rf, textvariable=self.det_result_var,
                                         anchor="w", font=("", 10, "bold"))
-        self.det_result_lbl.grid(row=4, column=1, sticky="w", padx=8, pady=3)
+        self.det_result_lbl.grid(row=row, column=1, sticky="w", padx=8, pady=3)
 
         ttk.Separator(rf, orient="horizontal").grid(
-            row=5, column=0, columnspan=2, sticky="ew", padx=8, pady=8)
+            row=row + 1, column=0, columnspan=2, sticky="ew", padx=8, pady=8)
 
         disc = ttk.Label(rf, wraplength=240, justify="left", foreground="#884400",
                          text="MarkText detects ONLY text it generated with "
-                              "its own watermark key. It is NOT a universal "
-                              "AI-text detector.")
-        disc.grid(row=6, column=0, columnspan=2, sticky="nw", padx=8, pady=2)
+                              "its own watermark key and parameters. It is NOT "
+                              "a universal AI-text detector. 'NOT DETECTED' "
+                              "means this watermark was not found, not that a "
+                              "human wrote the text.")
+        disc.grid(row=row + 2, column=0, columnspan=2, sticky="nw", padx=8, pady=2)
 
         f.rowconfigure(1, weight=1)
         f.columnconfigure(0, weight=2)
@@ -245,6 +288,9 @@ class App(tk.Tk):
         bf.grid(row=0, column=0, sticky="ew", padx=12, pady=(10, 4))
         ttk.Button(bf, text="Refresh", command=self._refresh_history).pack(side="left", padx=4)
         ttk.Button(bf, text="Clear History", command=self._clear_history).pack(side="left", padx=4)
+        ttk.Label(bf, text="Filtering, charts and export: run the web app "
+                           "(streamlit run app.py).",
+                  foreground="#555").pack(side="left", padx=12)
 
         tf = ttk.Frame(f)
         tf.grid(row=1, column=0, sticky="nsew", padx=12, pady=6)
@@ -253,7 +299,7 @@ class App(tk.Tk):
         self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=18)
         hdr = {"time": "Date / Time", "file": "Filename", "tokens": "Tokens",
                "green": "Green %", "z": "Z-score", "result": "Result"}
-        wds = {"time": 155, "file": 200, "tokens": 80, "green": 90, "z": 80, "result": 170}
+        wds = {"time": 155, "file": 200, "tokens": 80, "green": 90, "z": 80, "result": 190}
         for c in cols:
             self.tree.heading(c, text=hdr[c])
             self.tree.column(c, width=wds[c], anchor="w")
@@ -272,14 +318,18 @@ class App(tk.Tk):
 
         self._refresh_history()
 
-    # ----- TAB 4 — ABOUT
+    # ----- TAB 4 — ABOUT (the README, read from disk)
     def _build_about_tab(self):
         f = self.tab_about
+        try:
+            about = README_PATH.read_text(encoding="utf-8-sig")
+        except OSError:
+            about = ABOUT_FALLBACK
         txt = tk.Text(f, wrap="word", relief="flat", bg="#f8f8f8",
                       font=("Consolas", 10), padx=12, pady=12)
         sb = ttk.Scrollbar(f, command=txt.yview)
         txt.configure(yscrollcommand=sb.set)
-        txt.insert("1.0", ABOUT_TEXT)
+        txt.insert("1.0", about)
         txt.configure(state="disabled")
         txt.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
         sb.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
@@ -289,36 +339,45 @@ class App(tk.Tk):
     # =============================================================== ENGINE
     def _load_engine_async(self):
         self.set_status("Loading model (may download on first run)...")
-
-        def safe_progress(msg):
-            try:
-                self.after(0, self.set_status, msg)
-            except Exception:
-                pass
-
-        t = threading.Thread(target=self._load_worker, args=(safe_progress,), daemon=True)
+        t = threading.Thread(target=self._load_worker, daemon=True)
         t.start()
         self.after(300, self._poll_load, t)
 
-    def _load_worker(self, progress_callback):
+    def _load_worker(self):
+        # runs on the worker: no widget access, progress goes through the queue
         try:
-            self.engine = Engine(self.config, progress_callback=progress_callback)
-            self._load_ok = True
+            self.engine = Engine(self.settings, progress_callback=self.progress_queue.put)
+            self.load_state = "ready"
         except Exception as exc:
-            self._load_error = str(exc)
-            self._load_ok = False
+            self.load_error = str(exc)
+            self.load_state = "failed"
 
     def _poll_load(self, t):
+        while True:
+            try:
+                self.set_status(self.progress_queue.get_nowait())
+            except queue.Empty:
+                break
         if t.is_alive():
             self.after(300, self._poll_load, t)
+            return
+        if self.load_state == "ready":
+            self.set_status("Ready — {} on {}".format(
+                self.settings["model_id"], self.engine.device))
         else:
-            if getattr(self, "_load_ok", False):
-                self.set_status("Ready — " + self.config["model_id"])
-            else:
-                messagebox.showerror("Model Error",
-                                     "Failed to load the model:\n"
-                                     + getattr(self, "_load_error", "unknown"))
-                self.set_status("Model load failed")
+            messagebox.showerror("Model Error",
+                                 "Failed to load the model:\n" + self.load_error)
+            self.set_status("Model load failed")
+
+    def _engine_ready(self):
+        """Explain the engine's state to the user; True only when usable."""
+        if self.load_state == "ready":
+            return True
+        if self.load_state == "failed":
+            messagebox.showerror("No Model", "The model failed to load:\n" + self.load_error)
+        else:
+            messagebox.showinfo("No Model", "The model is still loading. Please wait.")
+        return False
 
     # ============================================================ GENERATE
     def _start_generate(self):
@@ -328,18 +387,20 @@ class App(tk.Tk):
             return
         try:
             max_tok = int(self.max_tokens_var.get())
-            if max_tok < 1 or max_tok > 2000:
+            if not MIN_TOKENS <= max_tok <= MAX_TOKENS:
                 raise ValueError
         except ValueError:
             messagebox.showerror("Invalid Max Tokens",
-                                 "Enter a whole number between 50 and 2000.")
+                                 "Enter a whole number between {} and {}.".format(
+                                     MIN_TOKENS, MAX_TOKENS))
             return
-        if self.engine is None:
-            messagebox.showerror("No Model", "The model is still loading.")
+        if not self._engine_ready():
             return
 
         mode = self.mode_var.get()
         self.gen_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="normal")
+        self.gen_cancel.clear()
         self.set_status("Generating{} text...".format(
             " watermarked" if mode == "watermarked" else ""))
 
@@ -349,28 +410,36 @@ class App(tk.Tk):
         t.start()
         self.after(200, self._poll_gen, t)
 
+    def _cancel_generate(self):
+        self.gen_cancel.set()
+        self.set_status("Cancelling after the current token...")
+
     def _gen_worker(self, prompt, max_tok, watermarked):
         try:
-            self._gen_result = self.engine.generate(
-                prompt, max_new_tokens=max_tok, watermarked=watermarked)
-            self._gen_ok = True
+            self.gen_result = self.engine.generate(
+                prompt, max_new_tokens=max_tok, watermarked=watermarked,
+                cancel_event=self.gen_cancel)
+            self.gen_error = ""
         except Exception as exc:
-            self._gen_error = str(exc)
-            self._gen_ok = False
+            self.gen_result = None
+            self.gen_error = str(exc)
 
     def _poll_gen(self, t):
         if t.is_alive():
             self.after(200, self._poll_gen, t)
             return
         self.gen_btn.configure(state="normal")
-        if self._gen_ok:
+        self.cancel_btn.configure(state="disabled")
+        if self.gen_result is not None:
+            info = self.gen_result
             self.output_text.delete("1.0", "end")
-            self.output_text.insert("1.0", self._gen_result)
-            n = len(self._gen_result.split())
-            self.gen_status_var.set("{:,} words generated".format(n))
-            self.set_status("Done")
+            self.output_text.insert("1.0", info["text"])
+            n = len(info["text"].split())
+            self.gen_status_var.set("{:,} words, {} mode, seed {}{}".format(
+                n, info["mode"], info["seed"], " (cancelled)" if info["cancelled"] else ""))
+            self.set_status("Done" if not info["cancelled"] else "Generation cancelled")
         else:
-            messagebox.showerror("Generation Error", str(self._gen_error))
+            messagebox.showerror("Generation Error", self.gen_error)
             self.set_status("Generation failed")
 
     def _copy_output(self):
@@ -386,11 +455,12 @@ class App(tk.Tk):
         if not text:
             messagebox.showerror("Nothing to Save", "Generate some text first.")
             return
-
-        mode = self.mode_var.get()
+        # the folder follows how the text was generated, not the radio's
+        # current position; edited text is still tagged with its origin
+        info = self.gen_result or {}
+        mode = info.get("mode", self.mode_var.get())
         folder = GENERATED_DIR / mode
         folder.mkdir(parents=True, exist_ok=True)
-        import datetime
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         default = "marktext_{}_{}.txt".format(mode, stamp)
 
@@ -408,11 +478,13 @@ class App(tk.Tk):
             p = p.with_suffix(".txt")
         try:
             p.write_text(text, encoding="utf-8")
+            side = write_sidecar(p, info) if info else None
         except OSError as exc:
             messagebox.showerror("Save Failed", str(exc))
             return
         self.gen_status_var.set("Saved: " + p.name)
-        messagebox.showinfo("Saved", "Saved to:\n" + str(p))
+        messagebox.showinfo("Saved", "Saved to:\n{}{}".format(
+            p, "\nParameters in:\n{}".format(side) if side else ""))
 
     def _clear_generate(self):
         self.output_text.delete("1.0", "end")
@@ -427,69 +499,89 @@ class App(tk.Tk):
         )
         if not path:
             return
+        p = pathlib.Path(path)
         try:
-            text = pathlib.Path(path).read_text(encoding="utf-8")
+            text = p.read_text(encoding="utf-8-sig")   # tolerate a BOM
         except (OSError, UnicodeDecodeError) as exc:
             messagebox.showerror("File Error", str(exc))
             return
         self.input_text.delete("1.0", "end")
         self.input_text.insert("1.0", text)
-        self._detect_filename = pathlib.Path(path).name
+        self.detect_filename = p.name
+        self.detect_loaded_text = text.strip()
+        side = read_sidecar(p)
+        self.det_source_var.set("{} ({} mode, seed {})".format(
+            p.name, side.get("mode", "?"), side.get("seed", "?")) if side else p.name)
 
     def _analyze(self):
         text = self.input_text.get("1.0", "end").strip()
         if not text:
             messagebox.showerror("Empty Input", "Paste or open text to analyze.")
             return
-        if self.engine is None:
-            messagebox.showerror("No Model", "The model is still loading.")
+        if not self._engine_ready():
             return
 
+        self.analyze_btn.configure(state="disabled")
         self.set_status("Analyzing...")
-        self.update_idletasks()
+        t = threading.Thread(target=self._det_worker, args=(text,), daemon=True)
+        t.start()
+        self.after(200, self._poll_detect, t, text)
 
+    def _det_worker(self, text):
         try:
-            stats = self.engine.detect(text)
+            self.det_result = self.engine.detect(text)
+            self.det_too_short = self.det_result is None
+            self.det_error = ""
         except Exception as exc:
-            messagebox.showerror("Detection Error", str(exc))
+            self.det_result = None
+            self.det_too_short = False
+            self.det_error = str(exc)
+
+    def _poll_detect(self, t, text):
+        if t.is_alive():
+            self.after(200, self._poll_detect, t, text)
+            return
+        self.analyze_btn.configure(state="normal")
+
+        if self.det_error:
+            messagebox.showerror("Detection Error", self.det_error)
             self.set_status("Analysis failed")
             return
-
-        if stats is None:
+        if self.det_too_short:
             messagebox.showerror("Too Short",
-                                 "Text is too short for analysis. "
-                                 "Need at least ~6 tokens (a sentence or two).")
+                                 "Text is too short for analysis. Need at least "
+                                 "{} tokens (a sentence or two).".format(self.engine.min_tokens))
             self.set_status("Text too short")
             return
 
-        green_pct = stats["green_fraction"] * 100.0
-        z = stats["z_score"]
-        if z >= 4.0:
-            result = "LIKELY MARKTEXT-GENERATED"
-            color = "#cc0000"
-        elif z >= 2.0:
-            result = "POSSIBLE WATERMARK"
-            color = "#cc8800"
-        else:
-            result = "NO WATERMARK"
-            color = "#228822"
-
+        stats = self.det_result
         self.det_vars["tokens"].set(str(stats["num_tokens_scored"]))
         self.det_vars["green"].set(str(stats["num_green_tokens"]))
-        self.det_vars["signal"].set("{:.1f}%".format(green_pct))
-        self.det_vars["zscore"].set("{:.2f}".format(z))
-        self.det_result_var.set(result)
-        self.det_result_lbl.configure(foreground=color)
+        self.det_vars["signal"].set("{:.1f}%".format(stats["green_fraction"] * 100.0))
+        self.det_vars["zscore"].set("{:.2f}".format(stats["z_score"]))
+        self.det_vars["pvalue"].set("{:.2e}".format(stats["p_value"]))
+        self.det_result_var.set(stats["label"])
+        self.det_result_lbl.configure(foreground=LABEL_COLORS.get(stats["label"], "#000000"))
 
-        filename = getattr(self, "_detect_filename", "manual_input")
-        detector.append_history(filename, stats)
-        self._detect_filename = None
+        # the file name applies only while the box still holds that file's text
+        unchanged = self.detect_filename and text == self.detect_loaded_text
+        filename = self.detect_filename if unchanged else "manual_input"
+        try:
+            history.append_history(filename, stats)
+        except OSError as exc:
+            messagebox.showerror("History Not Saved",
+                                 "The result is shown but could not be logged "
+                                 "(is the CSV open in Excel?):\n" + str(exc))
+            self.set_status("Analysis complete (not logged)")
+            return
         self._refresh_history()
         self.set_status("Analysis complete")
 
     def _clear_detect(self):
         self.input_text.delete("1.0", "end")
-        self._detect_filename = None
+        self.detect_filename = ""
+        self.detect_loaded_text = ""
+        self.det_source_var.set("")
         for v in self.det_vars.values():
             v.set("—")
         self.det_result_var.set("—")
@@ -499,7 +591,13 @@ class App(tk.Tk):
     def _refresh_history(self):
         for item in self.tree.get_children():
             self.tree.delete(item)
-        for row in detector.read_history():
+        try:
+            rows = history.read_history()
+        except (OSError, csv.Error, UnicodeDecodeError) as exc:
+            messagebox.showerror("History Error",
+                                 "Could not read the history CSV:\n" + str(exc))
+            return
+        for row in rows:
             self.tree.insert("", "end", values=(
                 row.get("timestamp", ""),
                 row.get("filename", ""),
@@ -515,11 +613,15 @@ class App(tk.Tk):
             return
         if not messagebox.askyesno("Clear History",
                                    "Delete all detection records?\n"
-                                   "The CSV header will be preserved."):
+                                   "A backup copy is written to logs/exports/ first."):
             return
-        detector.clear_history()
+        try:
+            backup = history.clear_history()
+        except OSError as exc:
+            messagebox.showerror("Clear Failed", str(exc))
+            return
         self._refresh_history()
-        messagebox.showinfo("Cleared", "History cleared.")
+        messagebox.showinfo("Cleared", "History cleared.\nBackup: " + str(backup))
 
     # ============================================================ UTILS
     def set_status(self, msg):

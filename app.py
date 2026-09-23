@@ -5,7 +5,7 @@ Run with:  streamlit run app.py
 Same four sections as the Tkinter app (main.py), built on the same core:
   config.py    JSON configuration
   engine.py    generation + watermark detection
-  detector.py  CSV detection history
+  history.py   CSV detection history
 
 Streamlit reruns this whole script on every interaction, so anything that
 must survive a rerun lives in st.session_state (per browser tab) or in
@@ -13,63 +13,41 @@ st.cache_resource (the model, shared by the whole server process).
 """
 
 import datetime
+import json
 import pathlib
-import shutil
 import threading
 
 import pandas as pd
 import streamlit as st
 
 import config as cfg
-import detector
-from engine import Engine
+import history
+from engine import (
+    Engine, LABEL_INCONCLUSIVE, LABEL_LIKELY, LABEL_NOT_DETECTED, LABEL_POSSIBLE,
+)
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 GENERATED_DIR = BASE_DIR / "generated"
 EXPORT_DIR = BASE_DIR / "logs" / "exports"
+README_PATH = BASE_DIR / "README.md"
 
 MIN_TOKENS = 50
 MAX_TOKENS = 2000
 
-# classify_z() label -> Streamlit call that renders it in a matching colour
+# Engine.detect() label -> Streamlit call that renders it in a matching colour
 VERDICT_STYLE = {
-    "LIKELY MARKTEXT": st.error,
-    "POSSIBLE WATERMARK": st.warning,
-    "NO WATERMARK": st.success,
+    LABEL_LIKELY: st.error,
+    LABEL_POSSIBLE: st.warning,
+    LABEL_NOT_DETECTED: st.success,
+    LABEL_INCONCLUSIVE: st.info,
 }
 
-ABOUT_MD = """\
-### MarkText — Watermarking and Detection of LLM-Generated Text
+ABOUT_FALLBACK = """\
+### MarkText
 
-MarkText is an educational demo of text provenance watermarking. It generates
-text with a local pretrained language model (Qwen2.5) and can bias sampling
-toward a keyed "green list" of tokens (Kirchenbauer et al., 2023,
-arXiv:2301.10226) through Hugging Face `WatermarkingConfig`. The Detect tab
-re-tokenizes a text, counts green tokens with `WatermarkDetector`, and reports
-a z-score.
-
-**Limitations**
-
-- MarkText detects ONLY text it generated with its own watermark key,
-  parameters and tokenizer. It is NOT a universal AI-text detector.
-- A low z-score means this watermark was not found. It does not show that a
-  human wrote the text.
-- Short texts carry little evidence; editing or paraphrasing weakens the signal.
-
-**Two front-ends, one core**
-
-- `app.py` (this page): Streamlit, `streamlit run app.py`
-- `main.py`: Tkinter desktop window, `python main.py`
-
-Both share `engine.py`, `config.py`, `detector.py` and the same files:
-
-| File | Format | Used for |
-|---|---|---|
-| `config/watermark_config.json` | JSON | model id, sampling and watermark parameters |
-| `generated/normal/*.txt`, `generated/watermarked/*.txt` | TXT | saved generations |
-| `logs/detection_history.csv` | CSV | one row per analysis |
-
-Everything runs locally after the model has been downloaded once.
+README.md was not found next to app.py. MarkText detects ONLY text it
+generated with its own watermark key and parameters; it is NOT a universal
+AI-text detector.
 """
 
 
@@ -84,17 +62,32 @@ def get_engine():
     return Engine(cfg.load_config()), threading.Lock()
 
 
+def read_readme():
+    try:
+        return README_PATH.read_text(encoding="utf-8-sig")
+    except OSError:
+        return ABOUT_FALLBACK
+
+
 def ensure_dirs():
     for d in (GENERATED_DIR / "normal", GENERATED_DIR / "watermarked", EXPORT_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
 
 # ------------------------------------------------------------ file handling
-def save_txt(text, mode):
+def save_txt(info):
+    """Write the text to generated/<mode>/ plus a <name>.json sidecar holding
+    the mode, seed and parameters it was generated with."""
+    mode = info["mode"]
     folder = GENERATED_DIR / mode
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / default_filename(mode)
-    path.write_text(text, encoding="utf-8")
+    path.write_text(info["text"], encoding="utf-8")
+    record = {k: v for k, v in info.items() if k != "text"}
+    record["saved_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    record["text_file"] = path.name
+    with open(path.with_suffix(".json"), "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=4)
     return path
 
 
@@ -109,13 +102,13 @@ def stamped(stem, suffix):
 
 
 def load_history_df():
-    """The history CSV as a DataFrame. detector.py writes it row by row with
+    """The history CSV as a DataFrame. history.py writes it row by row with
     the csv module; pandas only reads it for filtering and summaries."""
-    detector.ensure_history()
+    history.ensure_history()
     try:
-        df = pd.read_csv(detector.HISTORY_PATH, parse_dates=["timestamp"])
+        df = pd.read_csv(history.HISTORY_PATH, parse_dates=["timestamp"], encoding="utf-8")
     except pd.errors.EmptyDataError:
-        return pd.DataFrame(columns=detector.COLUMNS)
+        return pd.DataFrame(columns=history.COLUMNS)
     df["filename"] = df["filename"].fillna("")
     return df
 
@@ -146,7 +139,7 @@ def summarise(df):
 def on_save():
     state = st.session_state
     try:
-        state["gen_saved"] = str(save_txt(state["gen_text"], state["gen_mode"]))
+        state["gen_saved"] = str(save_txt(state["gen_info"]))
         state["gen_save_error"] = ""
     except OSError as exc:
         state["gen_saved"] = ""
@@ -162,7 +155,7 @@ def on_upload():
         state["detect_loaded"] = ""
         return
     try:
-        text = uploaded.getvalue().decode("utf-8")
+        text = uploaded.getvalue().decode("utf-8-sig")   # tolerate a BOM
     except UnicodeDecodeError as exc:
         state["upload_error"] = "{} is not valid UTF-8 text: {}".format(uploaded.name, exc)
         return
@@ -195,11 +188,7 @@ def on_export(key, stem):
 def on_clear_history():
     state = st.session_state
     try:
-        # keep a copy of the original before truncating it
-        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-        backup = stamped("detection_history_backup", ".csv")
-        shutil.copyfile(detector.HISTORY_PATH, backup)
-        detector.clear_history()
+        backup = history.clear_history()   # writes a backup copy first
         state["history_msg"] = "History cleared. Backup saved to: {}".format(backup)
     except OSError as exc:
         state["history_msg"] = "History NOT cleared: {}".format(exc)
@@ -211,12 +200,20 @@ st.set_page_config(page_title="MarkText", layout="wide")
 st.title("MarkText")
 st.caption("Watermarking and Detection of LLM-Generated Text")
 
-config = cfg.load_config()
+config_notes = []
+try:
+    config = cfg.load_config(notes=config_notes)
+except ValueError as exc:
+    st.error("Configuration error:\n\n{}".format(exc))
+    st.stop()
 ensure_dirs()
+for note in config_notes:
+    st.warning(note)
 
 state = st.session_state
 for key, default in (
-    ("gen_text", ""), ("gen_mode", ""), ("gen_saved", ""), ("gen_save_error", ""),
+    ("gen_text", ""), ("gen_mode", ""), ("gen_info", None),
+    ("gen_saved", ""), ("gen_save_error", ""),
     ("detect_text", ""), ("detect_loaded", ""), ("detect_filename", ""),
     ("detect_stats", None), ("upload_error", ""), ("history_msg", ""),
     ("export_msg", ""), ("export_error", ""),
@@ -258,7 +255,7 @@ with tab_gen:
             try:
                 with st.spinner("Generating {} text...".format(mode)):
                     with engine_lock:
-                        text = engine.generate(prompt.strip(),
+                        info = engine.generate(prompt.strip(),
                                                max_new_tokens=int(max_tok),
                                                watermarked=(mode == "watermarked"))
             except Exception as exc:
@@ -266,8 +263,9 @@ with tab_gen:
             else:
                 # remember the mode this text was made with, not the radio's
                 # later position
-                state["gen_text"] = text
-                state["gen_mode"] = mode
+                state["gen_info"] = info
+                state["gen_text"] = info["text"]
+                state["gen_mode"] = info["mode"]
                 state["gen_saved"] = ""
                 state["gen_save_error"] = ""
 
@@ -275,15 +273,17 @@ with tab_gen:
         st.subheader("Output ({})".format(state["gen_mode"]))
         # st.code gives a built-in copy-to-clipboard button
         st.code(state["gen_text"], language=None, wrap_lines=True)
-        st.caption("{:,} words generated".format(len(state["gen_text"].split())))
+        info = state["gen_info"] or {}
+        st.caption("{:,} words generated, seed {}, {} tokens".format(
+            len(state["gen_text"].split()), info.get("seed", "?"), info.get("new_tokens", "?")))
         st.download_button(
             "Save .TXT",
             data=state["gen_text"].encode("utf-8"),
             file_name=default_filename(state["gen_mode"]),
             mime="text/plain",
             on_click=on_save,
-            help="Writes the text into generated/{}/ and downloads a copy.".format(
-                state["gen_mode"]))
+            help="Writes the text and a .json sidecar (mode, seed, parameters) into "
+                 "generated/{}/ and downloads a copy.".format(state["gen_mode"]))
         if state["gen_saved"]:
             st.success("Saved to: {}".format(state["gen_saved"]))
         if state["gen_save_error"]:
@@ -316,15 +316,15 @@ with tab_det:
                 col_in.error("Detection failed: {}".format(exc))
             else:
                 if stats is None:
-                    col_in.warning("Text is too short for analysis. "
-                                   "Need at least ~6 tokens (a sentence or two).")
+                    col_in.warning("Text is too short for analysis. Need at least "
+                                   "{} tokens (a sentence or two).".format(engine.min_tokens))
                 else:
                     state["detect_stats"] = stats
                     # the file name only applies if the box still holds that file
                     unchanged = state["detect_filename"] and text == state["detect_loaded"]
                     filename = state["detect_filename"] if unchanged else "manual_input"
                     try:
-                        detector.append_history(filename, stats)
+                        history.append_history(filename, stats)
                     except OSError as exc:
                         col_in.error("Result shown but NOT logged; could not write "
                                      "the history CSV (is it open in Excel?): "
@@ -341,10 +341,13 @@ with tab_det:
             m2.metric("Green tokens", stats["num_green_tokens"])
             m1.metric("Watermark signal", "{:.1f}%".format(stats["green_fraction"] * 100.0))
             m2.metric("Z-score", "{:.2f}".format(stats["z_score"]))
-            verdict = detector.classify_z(stats["z_score"])
+            m1.metric("p-value", "{:.2e}".format(stats["p_value"]))
+            verdict = stats["label"]
             VERDICT_STYLE.get(verdict, st.info)(verdict)
         st.caption("MarkText detects ONLY text it generated with its own watermark "
-                   "key. It is NOT a universal AI-text detector.")
+                   "key and parameters. It is NOT a universal AI-text detector. "
+                   "'NOT DETECTED' means this watermark was not found, not that a "
+                   "human wrote the text.")
 
 # ----- TAB 3 — HISTORY
 with tab_hist:
@@ -360,8 +363,8 @@ with tab_hist:
 
     try:
         df = load_history_df()
-    except (OSError, pd.errors.ParserError) as exc:
-        df = pd.DataFrame(columns=detector.COLUMNS)
+    except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
+        df = pd.DataFrame(columns=history.COLUMNS)
         st.error("Could not read the history CSV: {}".format(exc))
 
     if df.empty:
@@ -436,9 +439,9 @@ with tab_hist:
                                file_name="history_summary.csv", mime="text/csv",
                                on_click=on_export, args=("export_summary", "history_summary"))
 
-        st.caption("{} analyses in {} - writes go through detector.py (csv module); "
+        st.caption("{} analyses in {} - writes go through history.py (csv module); "
                    "this tab only reads. Per-record edit/delete needs a unique id "
-                   "column (planned).".format(len(df), detector.HISTORY_PATH))
+                   "column (planned).".format(len(df), history.HISTORY_PATH))
         confirm = st.checkbox("Yes, clear all detection records "
                               "(a backup copy is written to logs/exports/ first)",
                               key="confirm_clear")
@@ -446,4 +449,8 @@ with tab_hist:
 
 # ----- TAB 4 — ABOUT
 with tab_about:
-    st.markdown(ABOUT_MD)
+    st.markdown(read_readme())
+    with st.expander("Current configuration (config/watermark_config.json)"):
+        shown = json.loads(json.dumps(config))
+        shown["watermark"]["hashing_key"] = "(hidden)"
+        st.json(shown)

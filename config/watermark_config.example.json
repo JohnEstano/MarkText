@@ -4,12 +4,18 @@
     "max_new_tokens": 300,
     "temperature": 0.8,
     "top_p": 0.9,
+    "top_k": 20,
+    "repetition_penalty": 1.1,
+    "seed": null,
     "watermark": {
         "greenlist_ratio": 0.5,
         "bias": 3.0,
         "seeding_scheme": "selfhash",
         "context_width": 5,
-        "hashing_key": 15485863
+        "hashing_key": null,
+        "ignore_repeated_ngrams": false
     },
-    "detection_threshold": 4.0
+    "detection_threshold": 4.0,
+    "possible_threshold": 2.0,
+    "min_tokens_for_verdict": 100
 }

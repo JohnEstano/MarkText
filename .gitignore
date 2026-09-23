@@ -12,6 +12,10 @@ build/
 venv/
 env/
 
+# Private watermark key lives here; copy watermark_config.example.json to start
+config/watermark_config.json
+config/*.bad-*.json
+
 # Detection / generated outputs (create locally)
 generated/normal/*
 generated/watermarked/*

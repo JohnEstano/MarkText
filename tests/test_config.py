@@ -1,0 +1,102 @@
+import copy
+import json
+
+import pytest
+
+import config as cfg
+
+
+def good():
+    c = copy.deepcopy(cfg.DEFAULT_CONFIG)
+    c["watermark"]["hashing_key"] = 12345
+    return c
+
+
+def test_deep_merge_keeps_defaults_and_nests():
+    merged = cfg._deep_merge(cfg.DEFAULT_CONFIG, {"device": "cpu", "watermark": {"bias": 1.5}})
+    assert merged["device"] == "cpu"
+    assert merged["watermark"]["bias"] == 1.5
+    assert merged["watermark"]["greenlist_ratio"] == 0.5      # untouched sibling kept
+    assert merged["max_new_tokens"] == 300
+
+
+def test_deep_merge_does_not_alias_defaults():
+    merged = cfg._deep_merge(cfg.DEFAULT_CONFIG, {})
+    merged["watermark"]["bias"] = 99
+    assert cfg.DEFAULT_CONFIG["watermark"]["bias"] == 3.0
+
+
+def test_validate_accepts_defaults_with_key():
+    cfg.validate_config(good())
+
+
+@pytest.mark.parametrize("path, value", [
+    (("device",), "mps"),
+    (("watermark", "greenlist_ratio"), 1.0),
+    (("watermark", "seeding_scheme"), "hash"),
+    (("watermark", "context_width"), 0),
+    (("possible_threshold",), 5.0),          # >= detection_threshold
+    (("max_new_tokens",), -1),
+    (("watermark", "hashing_key"), "abc"),
+])
+def test_validate_rejects_bad_values(path, value):
+    c = good()
+    node = c
+    for k in path[:-1]:
+        node = node[k]
+    node[path[-1]] = value
+    with pytest.raises(ValueError):
+        cfg.validate_config(c)
+
+
+def test_missing_file_is_created_with_private_key(tmp_path):
+    path = tmp_path / "wm.json"
+    notes = []
+    c = cfg.load_config(path, notes)
+    assert path.exists()
+    key = c["watermark"]["hashing_key"]
+    assert isinstance(key, int) and key > 0 and key != cfg.HF_PUBLIC_KEY
+    assert json.loads(path.read_text(encoding="utf-8"))["watermark"]["hashing_key"] == key
+    assert any("new private hashing key" in n for n in notes)
+
+
+def test_null_key_is_generated_and_saved(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text(json.dumps({"watermark": {"hashing_key": None}}), encoding="utf-8")
+    notes = []
+    c = cfg.load_config(path, notes)
+    assert c["watermark"]["hashing_key"] != cfg.HF_PUBLIC_KEY
+    assert json.loads(path.read_text(encoding="utf-8"))["watermark"]["hashing_key"] == \
+        c["watermark"]["hashing_key"]
+    assert any("generated" in n for n in notes)
+
+
+def test_public_default_key_is_kept_but_flagged(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text(json.dumps({"watermark": {"hashing_key": cfg.HF_PUBLIC_KEY}}), encoding="utf-8")
+    notes = []
+    c = cfg.load_config(path, notes)
+    assert c["watermark"]["hashing_key"] == cfg.HF_PUBLIC_KEY
+    assert any("public default" in n for n in notes)
+
+
+def test_corrupt_file_is_backed_up_not_overwritten(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text("{not json", encoding="utf-8")
+    notes = []
+    c = cfg.load_config(path, notes)
+    backups = list(tmp_path.glob("wm.bad-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == "{not json"
+    assert c["watermark"]["hashing_key"] is not None
+    assert any("moved to" in n for n in notes)
+
+
+def test_partial_file_gets_defaults(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text(json.dumps({"device": "cpu", "watermark": {"hashing_key": 7}}), encoding="utf-8")
+    c = cfg.load_config(path, [])
+    assert c["device"] == "cpu"
+    assert c["watermark"]["hashing_key"] == 7
+    assert c["top_k"] == 20
+    assert c["min_tokens_for_verdict"] == 100
