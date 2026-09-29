@@ -73,6 +73,8 @@ DEFAULT_CONFIG = {
         "assistant_max_tokens": 300,
         # sign a browser tab out after this many idle minutes (0 = never)
         "idle_minutes": 30,
+        # backup copies kept per data file in data/backups/ (the newest ones)
+        "keep_backups": 30,
     },
 }
 
@@ -180,6 +182,9 @@ def validate_config(config):
     idle = room.get("idle_minutes")
     need(isinstance(idle, int) and not isinstance(idle, bool) and 0 <= idle <= 1440,
          "classroom.idle_minutes must be an integer from 0 (never) to 1440")
+    keep = room.get("keep_backups")
+    need(isinstance(keep, int) and not isinstance(keep, bool) and 3 <= keep <= 1000,
+         "classroom.keep_backups must be an integer from 3 to 1000")
 
 
 def load_config(path=None, notes=None):

@@ -123,7 +123,8 @@ def test_classroom_defaults_are_merged_into_old_files(tmp_path):
     path = tmp_path / "wm.json"
     path.write_text(json.dumps({"watermark": {"hashing_key": 7}}), encoding="utf-8")
     c = cfg.load_config(path, [])
-    assert c["classroom"] == {"assistant_enabled": True, "assistant_max_tokens": 300, "idle_minutes": 30}
+    assert c["classroom"] == {"assistant_enabled": True, "assistant_max_tokens": 300, "idle_minutes": 30,
+                              "keep_backups": 30}
 
 
 def test_new_config_gets_a_key_id(tmp_path):

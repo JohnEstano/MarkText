@@ -6,7 +6,7 @@ while it is open; closing it stops new submissions but keeps everything.
 
 import datetime
 
-from classroom import accounts, classes, paths, store
+from classroom import accounts, audit, classes, paths, store
 
 COLUMNS = ["assignment_id", "class_id", "title", "instructions", "due_at",
            "created_by", "created_at", "status"]
@@ -64,6 +64,7 @@ def create_assignment(class_id, title, instructions="", due_at="", created_by=""
     row = {"assignment_id": store.new_id("asg"), "class_id": class_id,
            "created_by": record["teacher"], "created_at": store.now(), "status": "open", **fields}
     store.append_row(paths.assignments_path(), COLUMNS, row)
+    audit.record(record["teacher"], "assignment_created", row["assignment_id"], row["title"])
     return row
 
 
@@ -93,8 +94,11 @@ def update_assignment(assignment_id, by=None, **fields):
         raise ValueError("There is no assignment {}.".format(assignment_id))
     if by is not None and current["created_by"] != by:
         raise ValueError("Only the class's teacher can change this assignment.")
-    return store.update_one(paths.assignments_path(), COLUMNS, "assignment_id", assignment_id,
-                            lambda r: dict(r, **clean))
+    saved = store.update_one(paths.assignments_path(), COLUMNS, "assignment_id", assignment_id,
+                             lambda r: dict(r, **clean))
+    audit.record(by, "assignment_changed", assignment_id,
+                 ", ".join("status {}".format(v) if k == "status" else k for k, v in clean.items()))
+    return saved
 
 
 def close_assignment(assignment_id, by=None):

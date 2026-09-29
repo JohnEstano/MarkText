@@ -9,7 +9,7 @@ or closing an assignment is a backed-up rewrite of one row.
 import pandas as pd
 import streamlit as st
 
-from classroom import assignments, classes, reports, store
+from classroom import archive, assignments, classes, reports, store
 from ui import common, dialogs
 
 user = common.require_role("teacher")
@@ -50,13 +50,13 @@ def import_roster(class_id):
 
 @common.safely
 def export_roster(class_id):
-    path = classes.export_roster(class_id)
+    path = classes.export_roster(class_id, by=teacher)
     common.flash("Roster saved to {}.".format(common.data_label(path)), ":material/download:")
 
 
 @common.safely
 def export_summary(class_id):
-    path = reports.export_class_summary(class_id)
+    path = reports.export_class_summary(class_id, by=teacher)
     common.flash("Summary saved to {}.".format(common.data_label(path)), ":material/download:")
 
 
@@ -117,6 +117,12 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
               args=("rotate_code",), kwargs={"class_id": cid, "teacher": teacher})
     st.button("Archive", icon=":material/archive:", key="class_archive", on_click=common.open_dialog,
               args=("archive_class",), kwargs={"class_id": cid, "teacher": teacher})
+    # built only when clicked (a callable): the zip reads every text of the class
+    st.download_button("Export class", icon=":material/folder_zip:", key="class_zip_" + cid,
+                       data=lambda: archive.export_class(cid, by=teacher).read_bytes(),
+                       file_name="class_{}.zip".format(cid), mime="application/zip",
+                       help="Roster, assignments, every version handed in, reviews and the summary "
+                            "in one zip; a copy stays under data/reports/.")
 
 roster_tab, tasks_tab, summary_tab = st.tabs([":material/group: Roster", ":material/assignment: Assignments",
                                               ":material/table_chart: Summary"])

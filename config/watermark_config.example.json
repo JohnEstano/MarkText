@@ -23,6 +23,7 @@
     "classroom": {
         "assistant_enabled": true,
         "assistant_max_tokens": 300,
-        "idle_minutes": 30
+        "idle_minutes": 30,
+        "keep_backups": 30
     }
 }

@@ -8,7 +8,8 @@ from ui import common
 
 user = common.require_role("student")
 state = st.session_state
-SOURCE_TEXT = {"editor": "Typed", "upload": "Uploaded", "assistant": "Assistant draft"}
+SOURCE_TEXT = {"editor": "Typed", "upload": "Uploaded", "assistant": "Assistant draft",
+               "teacher": "Handed in by your teacher"}
 
 st.title("My submissions", anchor=False)
 mine = submissions.list_submissions(username=user["username"], current_only=False)

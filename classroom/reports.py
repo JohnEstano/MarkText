@@ -11,7 +11,7 @@ import datetime
 import pandas as pd
 
 import verdict
-from classroom import accounts, assignments, classes, paths, reviews, store, submissions
+from classroom import accounts, assignments, audit, classes, paths, reviews, store, submissions
 
 STATES = ("not submitted", "awaiting detection", "awaiting decision", "decided", "returned")
 REPORT_COLUMNS = ["username", "display_name", "state", "version", "submitted_at", "source",
@@ -229,14 +229,18 @@ def class_summary_rows(class_id):
     return _records(class_summary(class_id), SUMMARY_COLUMNS)
 
 
-def export_assignment_report(assignment_id):
+def export_assignment_report(assignment_id, by=None):
     """Write the assignment's table to a new CSV under data/reports/."""
     target = store.unique_path(paths.reports_dir(),
                                "assignment_{}_{}".format(assignment_id, store.stamp()), ".csv")
-    return store.write_new_csv(target, REPORT_COLUMNS, assignment_report_rows(assignment_id))
+    path = store.write_new_csv(target, REPORT_COLUMNS, assignment_report_rows(assignment_id))
+    audit.record(by, "exported", paths.data_relative(path), "report of {}".format(assignment_id))
+    return path
 
 
-def export_class_summary(class_id):
+def export_class_summary(class_id, by=None):
     target = store.unique_path(paths.reports_dir(),
                                "class_{}_summary_{}".format(class_id, store.stamp()), ".csv")
-    return store.write_new_csv(target, SUMMARY_COLUMNS, class_summary_rows(class_id))
+    path = store.write_new_csv(target, SUMMARY_COLUMNS, class_summary_rows(class_id))
+    audit.record(by, "exported", paths.data_relative(path), "summary of {}".format(class_id))
+    return path

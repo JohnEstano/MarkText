@@ -47,7 +47,7 @@ def main(argv=None):
         elif args.command == "reset-password":
             if not accounts.exists(args.username):
                 raise ValueError("There is no user {}.".format(args.username))
-            accounts.reset_password(args.username, _ask_password())
+            accounts.reset_password(args.username, _ask_password(), by="command line")
             print("Password changed for {}.".format(accounts.normalise_username(args.username)))
     except ValueError as exc:
         print(exc, file=sys.stderr)

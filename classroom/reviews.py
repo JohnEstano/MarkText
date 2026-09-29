@@ -16,7 +16,7 @@ Classroom treats a changed grade). Rows written before these two columns
 existed have them empty and show the decision itself.
 """
 
-from classroom import classes, paths, store
+from classroom import audit, classes, paths, store
 
 COLUMNS = ["review_id", "submission_id", "assignment_id", "class_id", "username", "version",
            "run_id", "model_id", "key_id", "device", "tokens_scored", "green_pct", "z_score",
@@ -134,8 +134,10 @@ def decide(review_id, decision, note="", decided_by=""):
     note = (note or "").strip()
     if len(note) > MAX_NOTE:
         raise ValueError("Notes are limited to {} characters.".format(MAX_NOTE))
-    return update_review(review_id, by=decided_by or None, decision=decision, note=note,
-                         decided_by=decided_by, decided_at=store.now())
+    saved = update_review(review_id, by=decided_by or None, decision=decision, note=note,
+                          decided_by=decided_by, decided_at=store.now())
+    audit.record(decided_by, "decided", review_id, decision)
+    return saved
 
 
 def return_to_student(review_id, by=None):
@@ -145,8 +147,10 @@ def return_to_student(review_id, by=None):
         raise ValueError("There is no review {}.".format(review_id))
     if review["decision"] == "pending":
         raise ValueError("Record a decision before returning the work.")
-    return update_review(review_id, by=by, returned="1", returned_at=store.now(),
-                         returned_decision=review["decision"], returned_note=review["note"])
+    saved = update_review(review_id, by=by, returned="1", returned_at=store.now(),
+                          returned_decision=review["decision"], returned_note=review["note"])
+    audit.record(by, "returned", review_id, review["decision"])
+    return saved
 
 
 def is_returned(review):

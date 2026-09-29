@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 import config as cfg
 import history
-from classroom import accounts, assignments, classes, detection, paths, reviews, store, submissions
+from classroom import accounts, assignments, backups, classes, detection, paths, reviews, store, submissions
 from ui import common, lab
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -457,3 +457,22 @@ def test_an_unsaved_note_survives_looking_at_another_student(new_app, school, pe
     assert at.text_area(key="note_" + rids["alice"]).value == "Half a thought"
     assert any("Not saved yet" in c.value for c in at.caption)
     assert reviews.get_review(rids["alice"])["note"] == ""
+
+
+def test_the_records_page_checks_files_and_restores_a_backup(new_app, school):
+    cid = school["class"]["class_id"]
+    submissions.submit(school["assignment"]["assignment_id"], "alice", ESSAY)
+    classes.rename_class(cid, "Renamed class", "", by="prof")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_records")
+    assert titles(at) == ["Records"]
+    assert at.dataframe                                        # the activity log is listed
+    ok(at.button(key="check_run").click().run())
+    assert [m.label for m in at.metric] == ["Errors", "Warnings", "Notes"]
+    assert at.metric[0].value == "0"
+    copy = [c["backup"] for c in backups.listing() if c["file"] == "classes.json"][0]
+    ok(at.selectbox(key="backup_pick").select(copy).run())
+    ok(at.button(key="backup_restore").click().run())
+    ok(at.button(key="restore_confirm").click().run())
+    assert classes.get_class(cid)["name"] == "Intro to writing"
+    assert any("Restored data/classes.json" in t.value for t in at.toast)

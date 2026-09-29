@@ -20,7 +20,8 @@ user = common.require_role("teacher")
 teacher = user["username"]
 state = st.session_state
 PER_PAGE = 15
-SOURCE_TEXT = {"editor": "Typed in the editor", "upload": "Uploaded", "assistant": "Drafted with the assistant"}
+SOURCE_TEXT = {"editor": "Typed in the editor", "upload": "Uploaded", "assistant": "Drafted with the assistant",
+               "teacher": "Handed in by you"}
 
 st.title("Review", anchor=False)
 mine = classes.list_classes(teacher)
@@ -76,8 +77,24 @@ def save_decision(review_id):
 
 @common.safely
 def export_report():
-    path = reports.export_assignment_report(assignment_id)
+    path = reports.export_assignment_report(assignment_id, by=teacher)
     common.flash("Report saved to {}.".format(common.data_label(path)), ":material/download:")
+
+
+def import_files():
+    uploaded = state.get("teacher_files_" + assignment_id) or []
+    if not uploaded:
+        common.flash("Choose one or more .txt files first.", ":material/error:")
+        return
+    try:
+        result = submissions.import_files(assignment_id, [(f.name, f.getvalue()) for f in uploaded],
+                                          by=teacher)
+    except ValueError as exc:
+        common.flash(str(exc), ":material/error:")
+        return
+    state["files_report"] = {"assignment_id": assignment_id, **result}
+    common.flash("{} handed in, {} skipped.".format(len(result["handed_in"]), len(result["skipped"])),
+                 ":material/upload_file:")
 
 
 def on_table_pick():
@@ -154,12 +171,25 @@ with st.container(horizontal=True, vertical_alignment="center"):
     st.button("Score all not scored ({})".format(pending), type="primary", icon=":material/fact_check:",
               key="score_all", disabled=pending == 0, on_click=request_scoring, args=("all",),
               help="Runs the watermark detector on every submission that has no score yet.")
+    with st.popover("Add students' files", icon=":material/upload_file:"):
+        st.markdown("Hand in work that reached you outside MarkText. Name each file after the "
+                    "student's username (**alice.txt**); each becomes a new version, nothing is "
+                    "replaced.")
+        st.file_uploader("Text files", type=["txt"], accept_multiple_files=True,
+                         key="teacher_files_" + assignment_id)
+        st.button("Hand in for them", type="primary", key="teacher_files_go", on_click=import_files)
     st.download_button("Export report", icon=":material/download:",
                        data=store.csv_text(reports.REPORT_COLUMNS,
                                            reports.assignment_report_rows(assignment_id)).encode("utf-8"),
                        file_name="assignment_{}.csv".format(assignment_id), mime="text/csv",
                        on_click=export_report, key="export_report",
                        help="Saves the table under data/reports/ and downloads a copy.")
+
+report = state.get("files_report")
+if report and report.get("assignment_id") == assignment_id and report["skipped"]:
+    with st.expander("Files not handed in ({})".format(len(report["skipped"])), icon=":material/info:",
+                     expanded=True):
+        st.dataframe(pd.DataFrame(report["skipped"], columns=["file", "reason"]), hide_index=True)
 
 # ------------------------------------------------------------ students
 if len(frame) == 0:

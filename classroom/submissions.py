@@ -17,13 +17,15 @@ The text file holds exactly the UTF-8 bytes whose sha256 is in the index.
 
 import hashlib
 import json
+import pathlib
 
-from classroom import accounts, assignments, classes, paths, store
+from classroom import accounts, assignments, audit, classes, paths, store
 
 COLUMNS = ["submission_id", "assignment_id", "class_id", "username", "version",
            "submitted_at", "source", "upload_filename", "text_path", "sha256", "words",
            "version_note", "status"]
-SOURCES = ("editor", "upload", "assistant")
+# "teacher": handed in by the teacher for the student (import_files)
+SOURCES = ("editor", "upload", "assistant", "teacher")
 STATUSES = ("current", "superseded")
 MAX_CHARS = 50_000
 MAX_NOTE = 200
@@ -58,18 +60,24 @@ def normalise_text(text):
 
 
 def submit(assignment_id, username, text, source="editor", upload_filename="",
-           version_note="", generation=None):
+           version_note="", generation=None, by_teacher=None):
     """Store a new version and return its index row. ValueError when the
     assignment is closed, the student is not in the class, or the text is
-    empty or too long."""
+    empty or too long. by_teacher: the class's teacher handing in for the
+    student (source "teacher"); a closed assignment then still accepts it,
+    because the teacher decides what counts as on time."""
     username = accounts.normalise_username(username)
     assignment = assignments.get_assignment(assignment_id)
     if assignment is None:
         raise ValueError("There is no assignment {}.".format(assignment_id))
-    if assignment["status"] != "open":
+    if by_teacher is None and assignment["status"] != "open":
         raise ValueError("This assignment is closed; your teacher is no longer accepting "
                          "submissions.")
+    if (by_teacher is None) == (source == "teacher"):
+        raise ValueError("Only the teacher hands in with source \"teacher\".")
     record = classes.get_class(assignment["class_id"])
+    if by_teacher is not None and (record is None or record["teacher"] != by_teacher):
+        raise ValueError("Only the class's teacher can hand in for a student.")
     if record is None or record.get("archived"):
         raise ValueError("This class is archived; it no longer accepts work.")
     if not classes.is_member(assignment["class_id"], username):
@@ -100,7 +108,7 @@ def submit(assignment_id, username, text, source="editor", upload_filename="",
             "version": version,
             "submitted_at": store.now(),
             "source": source,
-            "upload_filename": (upload_filename or "") if source == "upload" else "",
+            "upload_filename": (upload_filename or "") if source in ("upload", "teacher") else "",
             "text_path": "",
             "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "words": len(text.split()),
@@ -129,7 +137,47 @@ def submit(assignment_id, username, text, source="editor", upload_filename="",
             for path in created:                  # made by this call, never in the index
                 path.unlink(missing_ok=True)
             raise
+    audit.record(by_teacher or username, "handed_in", row["submission_id"],
+                 "{} version {} for {} ({})".format(assignment_id, version, username, source))
     return {k: str(v) for k, v in row.items()}
+
+
+def import_files(assignment_id, files, by):
+    """Hand in work for students from text files named after them (alice.txt
+    is alice's), for work that reached the teacher outside MarkText: e-mail,
+    a USB stick, a shared folder. Each file becomes a new version with the
+    source "teacher"; nothing is overwritten. `files` is [(file name,
+    bytes)]. Returns {"handed_in": [(file, username, version)],
+    "skipped": [(file, reason)]}."""
+    assignment = assignments.get_assignment(assignment_id)
+    if assignment is None:
+        raise ValueError("There is no assignment {}.".format(assignment_id))
+    result = {"handed_in": [], "skipped": []}
+    seen = set()
+    for name, data in files:
+        username = accounts.normalise_username(pathlib.PurePath(name).stem)
+        if not name.lower().endswith(".txt"):
+            result["skipped"].append((name, "not a .txt file"))
+            continue
+        if username in seen:
+            result["skipped"].append((name, "a second file for {}".format(username)))
+            continue
+        seen.add(username)
+        if not classes.is_member(assignment["class_id"], username):
+            result["skipped"].append((name, "no student {} in this class; name the file "
+                                            "<username>.txt".format(username)))
+            continue
+        try:
+            text = data.decode("utf-8-sig")
+            row = submit(assignment_id, username, text, "teacher", upload_filename=name,
+                         version_note="Handed in by the teacher", by_teacher=by)
+        except UnicodeDecodeError:
+            result["skipped"].append((name, "not UTF-8 text"))
+        except ValueError as exc:
+            result["skipped"].append((name, str(exc)))
+        else:
+            result["handed_in"].append((name, username, int(row["version"])))
+    return result
 
 
 def get_submission(submission_id):

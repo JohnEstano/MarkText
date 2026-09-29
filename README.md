@@ -24,7 +24,9 @@ It runs on an ordinary laptop with no GPU and no cloud service.
 - Roster: students who joined with the code, a CSV roster import (registered students are enrolled; unknown usernames are invited and become members when they join with the class code, since anyone could register a name first), removal that keeps the history, and a roster export
 - Assignments with instructions and a due date; close and reopen
 - Review page: every student with their state (not submitted, not scored, scored, decided, returned), the submitted text and all earlier versions, scoring one or all submissions, the detector's numbers, a decision (accepted, flagged, needs review) with a note, and returning the work
-- Reports: the assignment table and a class summary, each saved as a new CSV and downloaded
+- Reports: the assignment table and a class summary, each saved as a new CSV and downloaded; a whole class (roster, assignments, every version with its sidecar, reviews, summary) as one zip
+- Students' files: work that arrived outside MarkText (e-mail, a USB stick) handed in from text files named after the students (`alice.txt`), each as a new version
+- Records: the activity log (who did what, when; filter and export), a file check (every text on disk and unchanged, every row pointing at something that exists, no foreign columns, no half-written files) and the backup copies, any of which can be put back after a check
 
 **Student**
 - Register, join classes with a code, see open assignments and returned work
@@ -98,8 +100,9 @@ The key never leaves the config file: generation results, sidecars, reports and 
 | `data/submissions.csv` | CSV | `classroom/submissions.py` | Index of every submitted version: version, source, SHA-256, word count, current or superseded |
 | `data/submissions/…/vNNN.txt` + `.json` | TXT + JSON | `classroom/submissions.py` | The text of each version and its sidecar (how it was produced; the assistant's seed and model, never the key) |
 | `data/reviews.csv` | CSV | `classroom/reviews.py` | One row per scoring: numbers, model id, key id, decision, note, returned |
-| `data/reports/*.csv` | CSV | `classroom/reports.py`, `classes.py` | Exported assignment tables, class summaries and rosters |
-| `data/backups/*` | copies | `classroom/store.py` | A copy of any JSON or CSV file taken before it is rewritten |
+| `data/audit.csv` | CSV | `classroom/audit.py` | The activity log: one appended row per change (sign-ins, hand-ins, scores, decisions, exports, restores); never rewritten |
+| `data/reports/*.csv`, `*.zip` | CSV, ZIP | `classroom/reports.py`, `classes.py`, `archive.py`, `audit.py`, `integrity.py` | Exported assignment tables, class summaries, rosters, activity, file-check findings, and whole classes as zip files |
+| `data/backups/*` | copies | `classroom/store.py`, `backups.py` | A copy of any JSON or CSV file taken before it is rewritten (the newest 30 per file); restorable from the Records page |
 | `logs/detection_history.csv` | CSV | `history.py` | One row per detection, lab or classroom, with a unique `run_id` |
 | `logs/exports/*` | CSV, JSON | `history.py`, `experiment.py`, `ui/lab.py` | Lab exports, batch settings and summaries, history backups |
 | `generated/{normal,watermarked}/*.txt` + `.json` | TXT + JSON | `ui/lab.py`, `main.py` | Lab generations and their sidecars |
@@ -126,6 +129,11 @@ What the teacher's actions do to the files:
 | Score one or all submissions | the texts | a history row and a review row each | | tokenises and runs the z-test |
 | Decide, return | `reviews.csv` | backup | decision, note, returned (a copy of the decision and note the student sees) | a decision changed after returning waits for the next return |
 | Export a report | roster, submissions, reviews | `data/reports/assignment_*.csv`, `class_*_summary_*.csv` | | pandas left joins, one state per student |
+| Hand in students' files | the uploaded `.txt` files | `vNNN.txt` + `.json` and an index row per file | the older version → superseded | the file name picks the student; not UTF-8, unknown or duplicate names are skipped with a reason |
+| Export a class | every file of the class | `data/reports/class_*.zip` (temp name, then renamed) | | zipfile, DEFLATE |
+| Check the files | every data file and text, read-only | `data/reports/integrity_*.csv` on request | | SHA-256 of each text against the index, cross-references, headers, leftovers |
+| Restore a backup | the copy (checked first) | a backup of the current file | the data file, atomically | refuses a damaged copy |
+| Every change above | | a row in `data/audit.csv` | | |
 | Lab pages | history CSV, prompts, TXT uploads | TXT + JSON, new CSVs | note or filename of one record | summaries, charts, batch rates |
 
 Students read their assignments and their own files, and write one TXT + JSON pair per version; they never update or delete anything.
@@ -185,7 +193,7 @@ pytest -q
 
 ## Pages
 
-**Teacher**: Home, Classes (roster, assignments, summary), Review, and under Lab: Generate, Detect, History, Experiment. **Student**: Home, Assignment, My submissions. **Both**: Account (name, password) and About (this README; for the teacher also the list of files MarkText keeps and the configuration with the key hidden).
+**Teacher**: Home, Classes (roster, assignments, summary, class export), Review (scoring, decisions, students' files), Records (activity, file check, backups), and under Lab: Generate, Detect, History, Experiment. **Student**: Home, Assignment, My submissions. **Both**: Account (name, password) and About (this README; for the teacher also the list of files MarkText keeps and the configuration with the key hidden).
 
 ## Experiment: measuring detection
 

@@ -26,7 +26,7 @@ import json
 
 import history
 import verdict
-from classroom import classes, paths, reviews, store, submissions
+from classroom import audit, classes, paths, reviews, store, submissions
 
 
 def history_note(submission):
@@ -64,8 +64,11 @@ def detect_submission(engine, lock, submission, detected_by):
                                         extra=_history_extra(submission))
     key_id = (stats.get("watermark") or {}).get("key_id") or ""
     try:
-        return reviews.record_detection(submission, stats, run_id,
-                                        engine.config.get("model_id", ""), key_id, detected_by)
+        review = reviews.record_detection(submission, stats, run_id,
+                                          engine.config.get("model_id", ""), key_id, detected_by)
+        audit.record(detected_by, "scored", submission["submission_id"],
+                     "{}, z {:.2f}".format(stats.get("label", ""), stats.get("z_score", 0.0)))
+        return review
     except ValueError:
         try:
             history.delete_record(run_id)     # keep the pair whole

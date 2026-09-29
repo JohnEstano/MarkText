@@ -60,6 +60,7 @@ def load_config():
     ValueError propagates to app.py."""
     notes = []
     config = cfg.load_config(notes=notes)
+    store.KEEP_BACKUPS = config["classroom"]["keep_backups"]
     kept = st.session_state.setdefault("config_notes", [])
     dismissed = st.session_state.get("notes_dismissed", [])
     for note in notes:
@@ -166,8 +167,9 @@ def page(path, title, icon, default=False):
 
 
 # Addresses of the pages behind the sign-in (the two home pages live at "/").
-PROTECTED = ("teacher_classes", "teacher_review", "lab_generate", "lab_detect", "lab_history",
-             "lab_experiment", "account", "about", "student_assignment", "student_submissions")
+PROTECTED = ("teacher_classes", "teacher_review", "teacher_records", "lab_generate", "lab_detect",
+             "lab_history", "lab_experiment", "account", "about", "student_assignment",
+             "student_submissions")
 
 
 def pages_for(user):
@@ -184,7 +186,8 @@ def pages_for(user):
         return {
             "": [page("app_pages/teacher_home.py", "Home", ":material/home:", default=True),
                  page("app_pages/teacher_classes.py", "Classes", ":material/school:"),
-                 page("app_pages/teacher_review.py", "Review", ":material/fact_check:")],
+                 page("app_pages/teacher_review.py", "Review", ":material/fact_check:"),
+                 page("app_pages/teacher_records.py", "Records", ":material/folder_managed:")],
             "Lab": [page("app_pages/lab_generate.py", "Generate", ":material/edit_note:"),
                     page("app_pages/lab_detect.py", "Detect", ":material/manage_search:"),
                     page("app_pages/lab_history.py", "History", ":material/history:"),

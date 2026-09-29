@@ -40,6 +40,10 @@ def reviews_path():
     return DATA_DIR / "reviews.csv"
 
 
+def audit_path():
+    return DATA_DIR / "audit.csv"
+
+
 def reports_dir():
     return DATA_DIR / "reports"
 

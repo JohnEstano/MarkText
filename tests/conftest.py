@@ -20,6 +20,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(history, "EXPORT_DIR", tmp_path / "logs" / "exports")
     monkeypatch.setattr(experiment, "EXPORT_DIR", tmp_path / "logs" / "exports")
     monkeypatch.setattr(accounts, "ITERATIONS", 1000)
+    monkeypatch.setattr(accounts, "_failures", {})        # sign-in pauses stay within one test
     paths.ensure_dirs()
     return tmp_path / "data"
 

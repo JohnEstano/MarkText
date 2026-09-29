@@ -17,7 +17,7 @@ import io
 import re
 import secrets
 
-from classroom import accounts, paths, store
+from classroom import accounts, audit, paths, store
 
 EMPTY = {"version": 1, "classes": {}}
 ROSTER_COLUMNS = ["class_id", "username", "status", "added_via", "joined_at", "removed_at"]
@@ -77,7 +77,9 @@ def create_class(name, teacher, term=""):
         record["join_code"] = new_join_code({c["join_code"] for c in data["classes"].values()})
         data["classes"][record["class_id"]] = record
         return dict(record)
-    return store.update_json(paths.classes_path(), EMPTY, add)
+    created = store.update_json(paths.classes_path(), EMPTY, add)
+    audit.record(owner["username"], "class_created", created["class_id"], name)
+    return created
 
 
 def get_class(class_id):
@@ -109,7 +111,9 @@ def rotate_join_code(class_id, by=None):
     def change(record, data):
         record["join_code"] = new_join_code({c["join_code"] for c in data["classes"].values()})
         return record["join_code"]
-    return _change_class(class_id, by, change)
+    code = _change_class(class_id, by, change)
+    audit.record(by, "join_code_changed", class_id)
+    return code
 
 
 def rename_class(class_id, name, term, by=None):
@@ -121,14 +125,18 @@ def rename_class(class_id, name, term, by=None):
     def change(record, data):
         record.update(name=name, term=term)
         return dict(record)
-    return _change_class(class_id, by, change)
+    renamed = _change_class(class_id, by, change)
+    audit.record(by, "class_renamed", class_id, name)
+    return renamed
 
 
 def set_archived(class_id, archived=True, by=None):
     def change(record, data):
         record["archived"] = bool(archived)
         return dict(record)
-    return _change_class(class_id, by, change)
+    changed = _change_class(class_id, by, change)
+    audit.record(by, "class_archived" if archived else "class_restored", class_id)
+    return changed
 
 
 def find_by_join_code(code):
@@ -205,6 +213,8 @@ def join_class(code, username):
             store.append_row(path, ROSTER_COLUMNS, {
                 "class_id": class_id, "username": username, "status": "active",
                 "added_via": "code", "joined_at": store.now(), "removed_at": ""})
+    audit.record(username, "joined_class", class_id,
+                 "accepted an invitation" if row else "with the join code")
     return record
 
 
@@ -224,9 +234,11 @@ def remove_student(class_id, username, by=None):
 
     def match(r):
         return _is(class_id, username)(r) and r["status"] != "removed"
-    return store.update_where(paths.rosters_path(), ROSTER_COLUMNS, match,
-                              lambda r: dict(r, status="removed", removed_at=store.now()),
-                              "{} in {}".format(username, class_id))
+    saved = store.update_where(paths.rosters_path(), ROSTER_COLUMNS, match,
+                               lambda r: dict(r, status="removed", removed_at=store.now()),
+                               "{} in {}".format(username, class_id))
+    audit.record(by, "student_removed", class_id, username)
+    return saved
 
 
 def parse_roster_csv(data):
@@ -302,6 +314,8 @@ def import_roster(class_id, rows, by=None):
             result["enrolled" if user is not None else "invited"].append(username)
         if result["enrolled"] or result["invited"]:
             store.rewrite_rows(path, ROSTER_COLUMNS, all_rows)
+    audit.record(by, "roster_imported", class_id, "{} enrolled, {} invited, {} skipped".format(
+        len(result["enrolled"]), len(result["invited"]), len(result["skipped"])))
     return result
 
 
@@ -313,10 +327,12 @@ def export_rows(class_id):
     return rows
 
 
-def export_roster(class_id):
+def export_roster(class_id, by=None):
     """Write the class roster, with display names, to a new CSV file under
     data/reports/ and return its path."""
     if get_class(class_id) is None:
         raise ValueError("There is no class {}.".format(class_id))
     target = store.unique_path(paths.reports_dir(), "roster_{}_{}".format(class_id, store.stamp()), ".csv")
-    return store.write_new_csv(target, EXPORT_COLUMNS, export_rows(class_id))
+    path = store.write_new_csv(target, EXPORT_COLUMNS, export_rows(class_id))
+    audit.record(by, "exported", paths.data_relative(path), "roster of {}".format(class_id))
+    return path

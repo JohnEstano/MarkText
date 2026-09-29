@@ -23,7 +23,7 @@ import secrets
 import threading
 import time
 
-from classroom import paths, store
+from classroom import audit, paths, store
 
 ROLES = ("teacher", "student")
 ALGORITHM = "pbkdf2_sha256"
@@ -151,6 +151,7 @@ def register(username, password, role, display_name="", first_teacher=False):
             raise ValueError("The username {} is already taken.".format(username))
         data["users"][username] = record
     store.update_json(paths.users_path(), EMPTY, add)
+    audit.record(username, "registered", username, role)
     return public(username, record)
 
 
@@ -194,6 +195,7 @@ def authenticate(username, password):
     with _failures_guard:
         wait = _pause_left(username, time.monotonic())
     if wait > 0:
+        audit.record(username, "sign_in_paused", username)
         raise TooManyAttempts("Too many wrong passwords for {}. Wait {} seconds and try again.".format(
             username or "this account", math.ceil(wait)))
     record = _users().get(username)
@@ -201,6 +203,8 @@ def authenticate(username, password):
     if not verify_password(password or "", stored) or record is None:
         with _failures_guard:
             _failures.setdefault(username, []).append(time.monotonic())
+        audit.record(username, "sign_in_failed", username,
+                     "no such account" if record is None else "wrong password")
         return None
     with _failures_guard:
         _failures.pop(username, None)
@@ -209,9 +213,11 @@ def authenticate(username, password):
         data["users"][username]["last_login"] = store.now()
         return public(username, data["users"][username])
     try:
-        return store.update_json(paths.users_path(), EMPTY, touch, keep_backup=False)
+        user = store.update_json(paths.users_path(), EMPTY, touch, keep_backup=False)
     except store.FileProblem:
-        return public(username, record)
+        user = public(username, record)
+    audit.record(username, "sign_in", username)
+    return user
 
 
 def get_user(username):
@@ -245,11 +251,12 @@ def change_password(username, old_password, new_password):
     record = _users().get(username)
     if record is None or not verify_password(old_password or "", record.get("password", "")):
         raise ValueError("The current password is not correct.")
-    reset_password(username, new_password)
+    reset_password(username, new_password, by=username)
 
 
-def reset_password(username, new_password):
-    """Set a new password without the old one (the command line uses this)."""
+def reset_password(username, new_password, by=None):
+    """Set a new password without the old one (the command line, or a
+    teacher for a student). `by` is who did it, for the activity log."""
     username = normalise_username(username)
     validate_password(new_password, username)
     hashed = hash_password(new_password)
@@ -259,6 +266,7 @@ def reset_password(username, new_password):
             raise ValueError("There is no user {}.".format(username))
         data["users"][username]["password"] = hashed
     store.update_json(paths.users_path(), EMPTY, change)
+    audit.record(by, "password_changed" if by == username else "password_reset", username)
 
 
 def rename(username, display_name):
@@ -272,4 +280,6 @@ def rename(username, display_name):
             raise ValueError("There is no user {}.".format(username))
         data["users"][username]["display_name"] = display_name
         return public(username, data["users"][username])
-    return store.update_json(paths.users_path(), EMPTY, change)
+    user = store.update_json(paths.users_path(), EMPTY, change)
+    audit.record(username, "renamed", username, display_name)
+    return user
