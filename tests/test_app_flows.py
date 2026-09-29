@@ -236,3 +236,19 @@ def test_lab_pages_run_for_the_teacher(new_app, people):
     ok(at.switch_page("app_pages/lab_experiment.py").run())
     ok(at.switch_page("app_pages/about.py").run())
     ok(at.switch_page("app_pages/account.py").run())
+
+
+def test_the_student_picker_follows_a_choice_made_elsewhere(new_app, school, people):
+    """Regression: a row picked in the table (or a link from the home page)
+    must also move the student picker, not only the panel below it."""
+    classes.join_class(school["class"]["join_code"], "ben")
+    aid = school["assignment"]["assignment_id"]
+    submissions.submit(aid, "alice", ESSAY)
+    submissions.submit(aid, "ben", ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    picker = "_pick_review_pick"
+    assert at.selectbox(key=picker).value == "alice"
+    at.session_state["review_pick"] = "ben"          # what the table's row click does
+    ok(at.run())
+    assert at.selectbox(key=picker).value == "ben"

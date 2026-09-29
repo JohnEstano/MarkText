@@ -65,7 +65,7 @@ def on_update_record():
         common.flash("Record not updated: {}".format(exc), ":material/error:")
 
 
-st.title("History")
+st.title("History", anchor=False)
 st.caption("Every analysis, one row each, from the lab and from classroom reviews.")
 if state["export_msg"]:
     st.success(state["export_msg"], icon=":material/check_circle:")
@@ -125,7 +125,7 @@ else:
     left, right = st.columns([3, 2], gap="large")
     with left:
         with st.container(border=True):
-            st.subheader("z-score against tokens scored")
+            st.subheader("z-score against tokens scored", anchor=False)
             st.altair_chart(lab.z_chart(filtered, float(config["detection_threshold"])))
             st.caption("Dashed line: the detection threshold, z = {}.".format(
                 config["detection_threshold"]))
@@ -133,7 +133,7 @@ else:
     summary = lab.summarise(filtered, ("mode", "result") if has_modes else ("result",))
     with right:
         with st.container(border=True):
-            st.subheader("Summary by {}result".format("mode and " if has_modes else ""))
+            st.subheader("Summary by {}result".format("mode and " if has_modes else ""), anchor=False)
             st.dataframe(summary, hide_index=True, column_config={
                 "mean_z": st.column_config.NumberColumn("mean z", format="%.2f"),
                 "mean_green_pct": st.column_config.NumberColumn("mean green %", format="%.1f"),
@@ -146,7 +146,7 @@ else:
 
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("Records")
+            st.subheader("Records", anchor=False)
             state["export_rows"] = filtered
             st.download_button("Export filtered rows", data=filtered.to_csv(index=False).encode("utf-8"),
                                file_name="history_filtered.csv", mime="text/csv",
@@ -161,7 +161,8 @@ else:
             st.caption("{:,} records".format(len(ordered)))
             current = st.pagination(pages, key="history_page")
         start = (current - 1) * PER_PAGE
-        table_slot.dataframe(ordered.iloc[start:start + PER_PAGE], hide_index=True, column_config={
+        table_slot.dataframe(ordered.iloc[start:start + PER_PAGE], hide_index=True, placeholder="",
+                         column_config={
             "timestamp": st.column_config.DatetimeColumn(format="YYYY-MM-DD HH:mm:ss"),
             "green_pct": st.column_config.NumberColumn("green %", format="%.2f"),
             "z_score": st.column_config.NumberColumn("z", format="%.2f"),

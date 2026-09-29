@@ -13,7 +13,7 @@ common.require_role("teacher")
 state = st.session_state
 config = common.load_config()
 
-st.title("Experiment")
+st.title("Experiment", anchor=False)
 st.caption("Measure detection instead of demonstrating it. The summary gives the true-positive "
            "rate (watermarked rows flagged) and the false-positive rate (normal rows flagged).")
 if state["exp_msg"]:
@@ -27,7 +27,7 @@ except OSError as exc:
     st.error("Could not read {}: {}".format(experiment.PROMPT_FILE, exc), icon=":material/error:")
 
 with st.container(border=True):
-    st.subheader("New batch")
+    st.subheader("New batch", anchor=False)
     x1, x2, x3, x4 = st.columns(4)
     n_prompts = x1.number_input("Prompts (of {})".format(len(all_prompts)), 1, max(len(all_prompts), 1),
                                 min(3, max(len(all_prompts), 1)), key="exp_prompts")
@@ -79,7 +79,7 @@ if start:
 
 known = experiment.known_batches()
 with st.container(border=True):
-    st.subheader("Results")
+    st.subheader("Results", anchor=False)
     if not known:
         st.caption("No batches yet.")
     else:

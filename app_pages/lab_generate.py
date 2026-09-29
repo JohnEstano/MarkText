@@ -9,7 +9,7 @@ common.require_role("teacher")
 state = st.session_state
 config = common.load_config()
 
-st.title("Generate")
+st.title("Generate", anchor=False)
 st.caption("The same prompt, with or without the green-list bias. Saved texts keep their seed "
            "and parameters in a sidecar file.")
 
@@ -48,7 +48,7 @@ if state["gen_text"]:
     info = state["gen_info"] or {}
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("Output")
+            st.subheader("Output", anchor=False)
             st.badge(state["gen_mode"].capitalize(),
                      color="green" if state["gen_mode"] == "watermarked" else "gray")
         st.code(state["gen_text"], language=None, wrap_lines=True)

@@ -67,7 +67,7 @@ def set_status(assignment_id, status):
 current = by_id.get(state["open_class_id"])
 if current is None:
     with st.container(horizontal=True, vertical_alignment="center"):
-        st.title("Classes")
+        st.title("Classes", anchor=False)
         st.button("New class", type="primary", icon=":material/add:", on_click=common.open_dialog,
                   args=("create_class",), kwargs={"teacher": teacher}, key="classes_new")
     if not mine:
@@ -80,7 +80,7 @@ if current is None:
     for start in range(0, len(mine), 3):
         for column, record in zip(st.columns(3), mine[start:start + 3]):
             with column.container(border=True):
-                st.subheader(record["name"])
+                st.subheader(record["name"], anchor=False)
                 st.caption(record["term"] or "No term set")
                 st.caption("Join code")
                 st.code(classes.format_code(record["join_code"]), language=None)
@@ -104,7 +104,7 @@ st.button("All classes", icon=":material/arrow_back:", type="tertiary", on_click
           args=(None,), key="classes_back")
 with st.container(horizontal=True, vertical_alignment="bottom"):
     with st.container():
-        st.title(current["name"])
+        st.title(current["name"], anchor=False)
         st.caption(current["term"] or "No term set")
     with st.container(width="content"):
         st.caption("Join code")
@@ -122,7 +122,7 @@ with roster_tab:
     present = [r for r in rows if r["status"] != "removed"]
     removed = [r for r in rows if r["status"] == "removed"]
     with st.container(horizontal=True, vertical_alignment="center"):
-        st.subheader("{} students".format(sum(r["status"] == "active" for r in rows)))
+        st.subheader("{} students".format(sum(r["status"] == "active" for r in rows)), anchor=False)
         with st.popover("Import roster", icon=":material/upload_file:"):
             st.markdown("Upload a CSV file with a **username** column, one student per row. "
                         "Registered students are enrolled; other usernames are invited and join "
@@ -168,7 +168,7 @@ with roster_tab:
 
 with tasks_tab:
     with st.container(horizontal=True, vertical_alignment="center"):
-        st.subheader("Assignments")
+        st.subheader("Assignments", anchor=False)
         st.button("New assignment", type="primary", icon=":material/add:", key="task_new_" + cid,
                   on_click=common.open_dialog, args=("create_assignment",),
                   kwargs={"class_id": cid, "teacher": teacher})
@@ -209,7 +209,7 @@ with tasks_tab:
 with summary_tab:
     summary = reports.class_summary(cid)
     with st.container(horizontal=True, vertical_alignment="center"):
-        st.subheader("Summary")
+        st.subheader("Summary", anchor=False)
         st.download_button("Export summary", icon=":material/download:",
                            data=store.csv_text(reports.SUMMARY_COLUMNS,
                                                reports.class_summary_rows(cid)).encode("utf-8"),

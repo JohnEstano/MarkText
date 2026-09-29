@@ -15,7 +15,7 @@ user = common.require_role("student")
 state = st.session_state
 config = common.load_config()
 
-st.title("Assignment")
+st.title("Assignment", anchor=False)
 tasks = assignments.for_student(user["username"])
 if not tasks:
     common.empty_state("No assignments yet", "Assignments appear here once your teacher posts "
@@ -107,7 +107,7 @@ record = classes.get_class(task["class_id"]) or {}
 with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="center"):
         with st.container():
-            st.subheader(task["title"])
+            st.subheader(task["title"], anchor=False)
             due = "Due {}".format(common.day(task["due_at"])) if task["due_at"] else "No due date"
             if assignments.is_overdue(task) and task["status"] == "open":
                 due += " (past due)"
@@ -123,7 +123,7 @@ with st.container(border=True):
 if returned:
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
-            st.subheader("Your teacher's decision", icon=":material/assignment_return:")
+            st.subheader("Your teacher's decision", icon=":material/assignment_return:", anchor=False)
             common.decision_badge(review["decision"])
         st.caption("On version {}, returned {}".format(review["version"], common.when(review["returned_at"])))
         if review["note"]:
@@ -144,7 +144,7 @@ next_version = int(current["version"]) + 1 if current else 1
 write_col, help_col = st.columns([3, 2], gap="large")
 with write_col:
     with st.container(border=True):
-        st.subheader("Your answer" if not current else "A new version", icon=":material/edit_document:")
+        st.subheader("Your answer" if not current else "A new version", icon=":material/edit_document:", anchor=False)
         mode = st.segmented_control("How", ["Write here", "Upload a .txt file"], default="Write here",
                                     key="write_mode_" + assignment_id, label_visibility="collapsed",
                                     required=True)
@@ -166,7 +166,7 @@ with help_col:
     # ---- the assistant: the whole block goes away when the switch is off
     if assistant.enabled(config):
         with st.container(border=True):
-            st.subheader("Draft with the assistant", icon=":material/auto_awesome:")
+            st.subheader("Draft with the assistant", icon=":material/auto_awesome:", anchor=False)
             st.caption("The assistant writes a first draft for you. Its drafts are watermarked: "
                        "your teacher can tell that the text came from the assistant.")
             with st.form("assistant_" + assignment_id, border=False):
@@ -200,7 +200,7 @@ with help_col:
     older = submissions.versions(assignment_id, user["username"])
     if older:
         with st.container(border=True):
-            st.subheader("Your versions", icon=":material/history:")
+            st.subheader("Your versions", icon=":material/history:", anchor=False)
             for version in reversed(older):
                 st.markdown("**Version {}** · {} · {} words".format(
                     version["version"], common.when(version["submitted_at"]), version["words"]))

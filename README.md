@@ -1,39 +1,63 @@
 # MarkText
 
-**Watermarking and Detection of LLM-Generated Text**
+**A class space for written work, with a watermark the teacher can check**
 
-MarkText is an educational demo of text provenance watermarking. It generates text with a small local language model (Qwen2.5-0.5B-Instruct) and can bias sampling toward a keyed "green list" of tokens, following Kirchenbauer et al. (2023). A detector that knows the key re-scores a text and reports how far its green-token count sits above chance, as a z-score. Two front-ends share one core: a Tkinter desktop window and a Streamlit web page.
+MarkText Classroom is a small learning-management system built around text provenance watermarking. A teacher creates classes and assignments; students hand in their writing, and may draft it with MarkText's own writing assistant. The assistant is a local language model (Qwen2.5-0.5B-Instruct) whose output carries a keyed "green list" watermark (Kirchenbauer et al., 2023). The teacher scores each submission with the watermark detector, records a decision with a note, and returns it to the student.
 
-> **Limitation:** MarkText detects only text that MarkText itself generated with the same key, parameters and tokenizer. It is **not** a universal AI-text detector. "NOT DETECTED" means this watermark was not found, not that a human wrote the text.
+> **What detection answers:** "was this text drafted with this installation's assistant?", not "was this written by AI?". MarkText recognises only text generated with its own key, parameters and tokenizer. *Not detected* means this watermark was not found, not that a person wrote the text. Editing a draft heavily weakens the watermark.
 
 ---
 
 ## Purpose and users
 
-A lecturer uses MarkText to verify whether a text was produced by *this* MarkText installation with its watermark on, and to show a class, live, that watermarked and normal text from the same prompt read alike but score very differently. Researchers and students use the History tab to compare detection strength across lengths and settings. It runs on an ordinary laptop with no GPU and no cloud API.
+- **Teachers** (the main user). They run classes, collect submissions, score them, decide and return them, and export reports. Every file the system manages passes through the teacher's pages.
+- **Students** join a class with a code, read the assignment, write or upload their answer, can ask the assistant for a first draft, and see the teacher's decision and note when the work comes back.
+- **Lecturers and researchers** use the Lab pages (the original MarkText) to demonstrate the watermark live and to measure the detector's error rates with a batch experiment.
+
+It runs on an ordinary laptop with no GPU and no cloud service.
 
 ## Features
 
-- **Prompt-based generation** with Qwen2.5-Instruct, normal or watermarked, with an optional fixed seed and a Cancel button
-- **Watermarked generation** through Hugging Face `WatermarkingConfig` (green/red list logit bias)
-- **Detection** through `WatermarkDetector`: tokens scored, green count, z-score, p-value, verdict
-- **Save as .txt** with a `.json` sidecar recording mode, seed and parameters; copy to clipboard
-- **Detection history** as CSV with a unique id per record; web dashboard with filters, KPIs, chart, grouped summary, export, per-record note/filename editing and deletion, backup before any destructive write
-- **Batch experiment** (web tab or `experiment.py`): generate every prompt in both modes, score them all, and report true-positive and false-positive rates per length; interruptible and resumable
-- Fully local after the one-time model download
+**Teacher**
+- Home page with what needs attention across all classes and the most recent flags
+- Classes with a join code (six characters, no look-alike letters), a new code on demand, archive and restore
+- Roster: students who joined with the code, a CSV roster import (registered students are enrolled, unknown usernames invited until they register), removal that keeps the history, and a roster export
+- Assignments with instructions and a due date; close and reopen
+- Review page: every student with their state (not submitted, not scored, scored, decided, returned), the submitted text and all earlier versions, scoring one or all submissions, the detector's numbers, a decision (accepted, flagged, needs review) with a note, and returning the work
+- Reports: the assignment table and a class summary, each saved as a new CSV and downloaded
+
+**Student**
+- Register, join classes with a code, see open assignments and returned work
+- Write in the editor or upload a `.txt` file; every hand-in is a new version and none is overwritten
+- **Draft with the assistant** (can be switched off): a watermarked first draft, recorded with its seed in the submission's sidecar
+- The teacher's decision and note after the work is returned (the detector's numbers stay on the teacher's side)
+
+**Lab** (teacher only): Generate (normal or watermarked, save as TXT + JSON sidecar), Detect (any text), History (a dashboard over every detection), Experiment (true- and false-positive rates over many prompts).
+
+**Accounts**: passwords hashed with salted PBKDF2-HMAC-SHA256 (Python's `hashlib`); the first account is the teacher, created on a setup screen; more teachers only from the command line.
+
+## How a submission travels
+
+1. **Hand in.** `classroom/submissions.py` writes `v001.txt` and a `v001.json` sidecar under `data/submissions/<class>/<assignment>/<student>/` and appends a row to `data/submissions.csv`. A later version is written beside it, and the index marks the older row `superseded`.
+2. **Score.** `classroom/detection.py` reads the text, runs `Engine.detect`, appends a row to `logs/detection_history.csv` (source `submission`, with the class, assignment and student ids in its note) and a review row to `data/reviews.csv` with a copy of the numbers, the model id and the key id.
+3. **Decide and return.** `classroom/reviews.py` rewrites that one review row (backup first) with the decision, the note and the return time.
+4. **Report.** `classroom/reports.py` joins roster, submissions and reviews with pandas and writes a new CSV under `data/reports/`.
+
+The review keeps its own copy of the numbers so that clearing the lab history never erases a teacher's record; measurements cannot be edited in either file, so the two copies cannot disagree.
 
 ## Technology
 
 | Component | What |
 |-----------|------|
-| Language model | `Qwen/Qwen2.5-0.5B-Instruct` (Hugging Face Hub; the weights file is about 1 GB, safetensors) |
+| Language model | `Qwen/Qwen2.5-0.5B-Instruct` (Hugging Face Hub; about 1 GB, safetensors) |
 | Watermarking | Kirchenbauer et al. 2023 green/red list, Hugging Face's implementation (`transformers.WatermarkingConfig`) |
 | Detection | `transformers.WatermarkDetector`: one-proportion z-test |
-| Desktop GUI | Python Tkinter + ttk (`main.py`) |
-| Web GUI | Streamlit + pandas (`app.py`) |
+| Web app | Streamlit multipage app (`app.py`, `app_pages/`, `ui/`), pandas and Altair for tables and charts |
+| Classroom rules | `classroom/`: plain Python with the standard library (`csv`, `json`, `hashlib`, `secrets`, `pathlib`) |
+| Desktop app | Tkinter (`main.py`), the original single-window MarkText |
 | Framework | PyTorch + Hugging Face Transformers |
 
-MarkText *uses* Hugging Face's implementation of the algorithm; it does not re-implement it. The project's own code is the application around it: configuration, the shared-config design that keeps generation and detection consistent, the two front-ends, and the file handling.
+MarkText *uses* Hugging Face's implementation of the algorithm; it does not re-implement it. The project's own code is everything around it: the classroom, the file handling, the configuration that keeps generation and detection consistent, the front-ends and the experiment.
 
 ## Watermark algorithm
 
@@ -52,35 +76,55 @@ This project runs with `greenlist_ratio = 0.5` and `bias = 3.0` (Hugging Face's 
 | below | NOT DETECTED |
 | fewer than `min_tokens_for_verdict` (100) tokens scored | INCONCLUSIVE (short text) |
 
-All four numbers live in `config/watermark_config.json` and are applied in one place (`engine.classify`). The paper's own running example is z > 4, about a 3×10⁻⁵ false-positive probability.
+All four numbers live in `config/watermark_config.json` and are applied in one place (`verdict.classify`). The paper's own running example is z > 4, about a 3×10⁻⁵ false-positive probability.
 
 ## The key
 
-The hashing key is a shared secret: whoever holds it can verify the watermark and can also produce text that carries it. On first run MarkText generates a private key and writes it to `config/watermark_config.json`, which is git-ignored; `config/watermark_config.example.json` shows the schema. Changing the key makes previously generated text undetectable, so texts are tied to the installation that made them. If a config carries Hugging Face's public default key (15485863), both front-ends warn on startup. The sample texts under `generated/` in this repository were produced with that public key.
+The hashing key is a shared secret: whoever holds it can verify the watermark and can also produce text that carries it. On first run MarkText generates a private key and writes it to `config/watermark_config.json`, which is git-ignored; `config/watermark_config.example.json` shows the schema. Changing the key makes previously generated text undetectable, so texts are tied to the installation that made them. If a config carries Hugging Face's public default key (15485863), the teacher's home page and the desktop app warn about it.
+
+The key never leaves the config file: generation results, sidecars, reports and the About page show only the public parameters (`config.public_watermark`) and a **key id**, a random label stored beside the key and regenerated with it. A review records the key id it was scored with, so the review page can say when a submission was scored under an older key. The key id is random on purpose: any hash of a 31-bit key could be reversed by trying every value.
 
 ## Files
 
-| File | Type | Purpose |
-|------|------|---------|
-| `config/watermark_config.json` | JSON | Model id, sampling and watermark parameters, thresholds, private key (git-ignored; created on first run) |
-| `config/watermark_config.example.json` | JSON | Schema with a null key |
-| `generated/normal/*.txt`, `generated/watermarked/*.txt` | TXT | Saved generations |
-| `generated/**/*.json` | JSON | Sidecar per saved text: mode, seed, parameters, device |
-| `prompts/experiment_prompts.txt` | TXT | 100 prompts, one per line, read by the experiment |
-| `logs/detection_history.csv` | CSV | One row per analysis: `run_id`, source, mode, seed, tokens, green %, z, p-value, verdict, watermark parameters, device, note |
-| `logs/exports/experiment_<batch>.json` | JSON | Settings of a batch (prompt-file hash, lengths, seed base, config snapshot without the key) |
-| `logs/exports/detection_history_v1_*.csv` | CSV | Archive of a history file in the old 7-column layout, written once when it is migrated |
-| `logs/exports/*.csv` | CSV | Exports, summaries and backups written by the History tab |
+| File | Type | Owner | Purpose |
+|------|------|-------|---------|
+| `config/watermark_config.json` | JSON | `config.py` | Model, sampling and watermark parameters, thresholds, private key and key id, classroom switches (git-ignored; created on first run) |
+| `data/users.json` | JSON | `classroom/accounts.py` | Accounts: display name, role, salted password hash, last sign-in |
+| `data/classes.json` | JSON | `classroom/classes.py` | Classes: name, term, teacher, join code, archived |
+| `data/rosters.csv` | CSV | `classroom/classes.py` | One row per student per class: active, invited or removed |
+| `data/assignments.csv` | CSV | `classroom/assignments.py` | Title, instructions, due date, open or closed |
+| `data/submissions.csv` | CSV | `classroom/submissions.py` | Index of every submitted version: version, source, SHA-256, word count, current or superseded |
+| `data/submissions/…/vNNN.txt` + `.json` | TXT + JSON | `classroom/submissions.py` | The text of each version and its sidecar (how it was produced; the assistant's seed and model, never the key) |
+| `data/reviews.csv` | CSV | `classroom/reviews.py` | One row per scoring: numbers, model id, key id, decision, note, returned |
+| `data/reports/*.csv` | CSV | `classroom/reports.py`, `classes.py` | Exported assignment tables, class summaries and rosters |
+| `data/backups/*` | copies | `classroom/store.py` | A copy of any JSON or CSV file taken before it is rewritten |
+| `logs/detection_history.csv` | CSV | `history.py` | One row per detection, lab or classroom, with a unique `run_id` |
+| `logs/exports/*` | CSV, JSON | `history.py`, `experiment.py`, `ui/lab.py` | Lab exports, batch settings and summaries, history backups |
+| `generated/{normal,watermarked}/*.txt` + `.json` | TXT + JSON | `ui/lab.py`, `main.py` | Lab generations and their sidecars |
+| `prompts/experiment_prompts.txt` | TXT | `experiment.py` | 100 prompts for the batch experiment |
+| `classroom/demo_texts/*.txt` | TXT | `classroom/seed_demo.py` | Four essays written by people, for the demo class |
 
 ## File handling
 
-- **Read**: config JSON (`config.py`), TXT files and their sidecars, the prompt list, the CSV history, `README.md` for the About tab
-- **Write**: TXT exports and JSON sidecars, the config on first run, batch settings JSON, new CSVs under `logs/exports/`
-- **Update**: append one CSV row per analysis; edit one record's note or filename, or delete one record, by `run_id` with a backup first and a check that exactly one row matches (`history.py`, `csv.DictWriter`)
-- **Process**: tokenize, run inference, compute the z-score; filter, group and summarise the history and batch results with pandas (web app)
-- **Organize**: directories created on start, `normal/` vs `watermarked/`, timestamped names, backup before every destructive write, automatic migration of an old history layout with the original archived
+Every write follows the same rules (`classroom/store.py`, `history.py`): paths come from `pathlib` anchored on the project folder; text files are opened with `encoding="utf-8"`; CSV files go through `csv.DictWriter`/`DictReader` with a fixed column list and `newline=""`; a rewrite first copies the old file to a backup, then writes a temporary file and swaps it in with `os.replace`, so a crash never leaves half a file; a file with unexpected columns is refused, not "repaired"; new files never overwrite old ones. One lock per file keeps two browser sessions from interleaving a read-modify-write.
 
-Row writing uses the standard library `csv` module; pandas only reads the file and writes new ones. Model weights are read by `transformers` from the Hugging Face cache.
+What the teacher's actions do to the files:
+
+| Teacher action | Reads | Writes | Updates | Processes |
+|---|---|---|---|---|
+| Sign in | `users.json` | | last sign-in | verifies the password hash |
+| Create a class, new join code | `classes.json` | `classes.json` (backup) | join code | makes a unique code |
+| Import a roster | the uploaded CSV, `users.json` | `rosters.csv` (one backed-up rewrite) | invited → active when the student registers | validates usernames: enrol, invite or skip |
+| Export a roster | `rosters.csv`, `users.json` | `data/reports/roster_*.csv` | | joins names to usernames |
+| Remove a student | `rosters.csv` | backup | status → removed | exactly one row must match |
+| Create, close, reopen an assignment | `assignments.csv` | a row | status | |
+| Open a submission | `vNNN.txt`, its sidecar, `reviews.csv` | | | |
+| Score one or all submissions | the texts | a history row and a review row each | | tokenises and runs the z-test |
+| Decide, return | `reviews.csv` | backup | decision, note, returned | |
+| Export a report | roster, submissions, reviews | `data/reports/assignment_*.csv`, `class_*_summary_*.csv` | | pandas left joins, one state per student |
+| Lab pages | history CSV, prompts, TXT uploads | TXT + JSON, new CSVs | note or filename of one record | summaries, charts, batch rates |
+
+Students read their assignments and their own files, and write one TXT + JSON pair per version; they never update or delete anything.
 
 ## Installation
 
@@ -93,36 +137,48 @@ pip install -r requirements.txt
 
 ## Running
 
-Desktop (Tkinter):
+```bash
+streamlit run app.py
+```
+
+It opens at http://localhost:8501 (bound to localhost in `.streamlit/config.toml`). The first visit shows a setup screen that creates the teacher account. The model (about 1 GB) downloads into `~/.cache/huggingface/hub` the first time a page needs it; signing in and browsing never wait for it.
+
+A demo class for presentations (teacher `prof`, students `alice`, `ben`, `chloe`, `dan`, `eva`, password `marktext-demo`; four essays written by people and one drafted with the assistant, all scored):
+
+```bash
+python -m classroom.seed_demo              # about two minutes on a CPU
+python -m classroom.seed_demo --no-model   # quick: essays only, nothing scored
+python -m classroom.seed_demo --reset      # move data/ aside first (renamed, never deleted)
+```
+
+The teacher's home page offers the same demo with one button when there are no classes yet.
+
+More teachers, and password resets, from the command line:
+
+```bash
+python -m classroom.cli create-teacher reyes --display-name "Prof. Reyes"
+python -m classroom.cli list-users
+python -m classroom.cli reset-password alice
+```
+
+To switch the student's assistant off, set `"assistant_enabled": false` under `"classroom"` in `config/watermark_config.json`; the rest of the system is unchanged.
+
+The original desktop app still runs on the same config, history and `generated/` folders:
 
 ```bash
 python main.py
 ```
 
-Web (Streamlit), opens at http://localhost:8501 (bound to localhost in `.streamlit/config.toml`):
-
-```bash
-streamlit run app.py
-```
-
-On first run Hugging Face downloads Qwen2.5-0.5B-Instruct (about 1 GB) into `~/.cache/huggingface/hub`; later launches use the cache. Both front-ends share the config, the history CSV and the `generated/` folders. Generation on a CPU takes a few tokens per second.
-
-Tests (no model download needed):
+Tests (no model download needed; a fake engine stands in for the model):
 
 ```bash
 pip install pytest
 pytest -q
 ```
 
-## GUI
+## Pages
 
-Four tabs in the desktop app, five in the web app:
-
-1. **Generate**: prompt, max tokens, Normal or Watermarked, Generate / Cancel. Copy, or Save (.txt + .json sidecar; the web app also downloads a copy).
-2. **Detect**: open a TXT (its sidecar is shown if present) or paste text, Analyze. Shows tokens analyzed, green tokens, signal, z-score, p-value and the verdict.
-3. **History**: the log. Web app: filter by result, source, batch, filename, date and length; KPIs; z-score vs tokens chart with the threshold line; summary by mode and result; export filtered rows or summary to a new CSV; edit a record's note or filename or delete it by `run_id`; Clear History writes a backup first.
-4. **Experiment** (web app only): run the batch described below and read its summary.
-5. **About**: this README, read from disk, plus the current configuration (key hidden).
+**Teacher**: Home, Classes (roster, assignments, summary), Review, and under Lab: Generate, Detect, History, Experiment. **Student**: Home, Assignment, My submissions. **Both**: Account (name, password) and About (this README; for the teacher also the list of files MarkText keeps and the configuration with the key hidden).
 
 ## Experiment: measuring detection
 
@@ -143,26 +199,34 @@ python experiment.py --lengths 50 150 300 --seed 100
 python experiment.py --resume <batch_id>
 ```
 
-Every row is written as soon as it exists, so an interrupted batch loses at most one generation; `--resume` skips finished cells. Each cell's seed is derived from the seed base and the cell itself (prompt, length, mode, run), so a batch can be repeated exactly and extended with more lengths without changing existing cells. The summary is exported to `logs/exports/experiment_<batch_id>_summary.csv` and shown in the web app's Experiment tab.
+Every row is written as soon as it exists, so an interrupted batch loses at most one generation; `--resume` skips finished cells. Each cell's seed is derived from the seed base and the cell itself (prompt, length, mode, run), so a batch can be repeated exactly and extended with more lengths without changing existing cells. The summary is exported to `logs/exports/experiment_<batch_id>_summary.csv` and shown on the Experiment page.
 
-Measured results: see the table at the end of this file once the demo batch has run.
+Measured results (batch `b6299b88`, 2026-09-23, 100 prompts x 150 tokens x both modes, seed base 100, bias 3.0, ratio 0.5, `selfhash`, width 5, CPU):
+
+| Mode | n | Flagged at z ≥ 4 | At or above z ≥ 2 | Mean z | Mean green share | Inconclusive |
+|---|---|---|---|---|---|---|
+| watermarked | 100 | **86%** (true-positive rate) | 100% | 5.22 | 71.7% | 1% |
+| normal | 100 | **0%** (false-positive rate) | 0% | -0.35 | 48.5% | 1% |
+
+Reading it: at 150 tokens the threshold of 4.0 catches 86 of 100 watermarked texts and none of the normal ones; every watermarked text clears 2.0. The smoke batch (3 prompts x 50/150/300 tokens) showed 100% at 300 tokens and 0% at 50 tokens, where everything is inconclusive. Ten of the 200 texts (7 normal, 3 watermarked) re-tokenized to a different count than they were generated with, which is the decode-then-encode gap the detector has to live with.
 
 ## Limitations
 
-- Only detects text generated by MarkText with the same key and parameters, on the same device type.
+- Detection recognises only text generated by this installation's assistant, with the same key and parameters. It is not a general AI-text detector.
 - Short texts give little evidence; below 100 scored tokens the verdict is INCONCLUSIVE.
-- Editing, paraphrasing or heavily rewriting text weakens or destroys the watermark.
-- The key is a symmetric secret: leaking it allows forgery; rotating it orphans old texts.
+- Editing, paraphrasing or heavily rewriting a draft weakens or destroys the watermark, so a low score is not proof of independent work.
+- The key is a symmetric secret: leaking it allows forgery; rotating it orphans old texts (reviews say which key scored them).
+- Sign-in lasts for one browser tab: reloading the page signs you out. The files are meant for one server process; two servers on one `data/` folder are not supported.
 - Detection assumes independent scored positions; overlapping and repeated n-grams make the z-score an approximation.
 - The underlying model generates from its own training data; MarkText does not claim ownership of it.
 
 ## Assignment requirements mapping
 
-- **Purpose and target users**: an educational provenance demo and verifier for lecturers, students and researchers; see "Purpose and users".
-- **Main features**: generation in two modes, detection with a calibrated statistic, saving with metadata, history with analysis.
-- **Files/data**: JSON (config, sidecars), TXT (generations), CSV (history, exports), safetensors weights read by the library.
-- **File handling**: reads, creates, appends, updates and deletes single records, backs up, migrates, exports and organises those files; see "File handling".
-- **ML/NLP component**: a pretrained causal language model, a sampling-time watermark, a statistical detector, and an experiment that measures the detector's error rates, all via Hugging Face Transformers.
+- **Purpose and target users**: a classroom system in which a teacher checks whether submissions were drafted with the class's watermarking assistant; users are the teacher, the students, and lecturers or researchers in the Lab. See "Purpose and users".
+- **Main features**: accounts and roles, classes with join codes and rosters, assignments, versioned submissions, scoring, decisions and returns, reports, the assistant, and the Lab (generation, detection, history, experiment).
+- **Files/data**: JSON (config, accounts, classes, sidecars), CSV (rosters, assignments, submissions index, reviews, detection history, reports), TXT (submissions, generations, prompts), safetensors weights read by the library. See "Files".
+- **File handling**: the teacher's actions read, write, update and process those files through one set of rules (backup, atomic replace, fixed columns, exactly-one-match updates, never overwrite). See "File handling".
+- **ML/NLP component**: a pretrained causal language model, a sampling-time watermark, a statistical detector applied to student submissions, and an experiment that measures the detector's error rates, all via Hugging Face Transformers.
 
 ## References
 

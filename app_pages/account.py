@@ -9,12 +9,12 @@ state = st.session_state
 user = common.current_user()
 record = accounts.get_user(user["username"]) or user
 
-st.title("Account")
+st.title("Account", anchor=False)
 left, right = st.columns(2, gap="large")
 
 with left:
     with st.container(border=True):
-        st.subheader("Profile")
+        st.subheader("Profile", anchor=False)
         st.table({":material/badge: Username": record["username"],
                   ":material/school: Role": record["role"].capitalize(),
                   ":material/event: Member since": common.when(record["created_at"]),
@@ -33,7 +33,7 @@ with left:
 
 with right:
     with st.container(border=True):
-        st.subheader("Password")
+        st.subheader("Password", anchor=False)
         with st.form("password", border=False, clear_on_submit=True):
             old = st.text_input("Current password", type="password", key="account_old")
             new = st.text_input("New password", type="password", key="account_new",
@@ -51,7 +51,7 @@ with right:
                     st.rerun()
     if record["role"] == "teacher":
         with st.container(border=True):
-            st.subheader("More teachers")
+            st.subheader("More teachers", anchor=False)
             st.caption("Teacher accounts are created on the server, never from the sign-in page:")
             st.code("python -m classroom.cli create-teacher <username> --display-name \"<name>\"",
                     language="bash")

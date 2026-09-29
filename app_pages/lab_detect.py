@@ -9,7 +9,7 @@ from ui import common, lab
 common.require_role("teacher")
 state = st.session_state
 
-st.title("Detect")
+st.title("Detect", anchor=False)
 st.caption("Re-score a text against this installation's key. Every analysis is logged.")
 col_in, col_out = st.columns([3, 2], gap="large")
 
@@ -53,7 +53,7 @@ if analyze:
 
 with col_out:
     with st.container(border=True):
-        st.subheader("Result")
+        st.subheader("Result", anchor=False)
         stats = state["detect_stats"]
         if stats is None:
             st.caption("No analysis yet.")

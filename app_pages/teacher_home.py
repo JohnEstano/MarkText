@@ -26,7 +26,7 @@ def load_demo():
     st.rerun()
 
 
-st.title("Hello, {}".format(common.first_name(user)))
+st.title("Hello, {}".format(common.first_name(user)), anchor=False)
 overview = reports.teacher_overview(user["username"])
 
 for note in state.get("config_notes", []):
@@ -61,7 +61,7 @@ else:
     left, right = st.columns([3, 2], gap="large")
     with left:
         with st.container(border=True):
-            st.subheader("Needs your attention", icon=":material/pending_actions:")
+            st.subheader("Needs your attention", icon=":material/pending_actions:", anchor=False)
             if not overview["queue"]:
                 st.caption("Nothing waiting. New submissions appear here.")
             for item in overview["queue"]:
@@ -81,7 +81,7 @@ else:
                               args=(item["class_id"], item["assignment_id"]))
     with right:
         with st.container(border=True):
-            st.subheader("Recent flags", icon=":material/flag:")
+            st.subheader("Recent flags", icon=":material/flag:", anchor=False)
             if not overview["recent_flags"]:
                 st.caption("No submission has been flagged or scored as likely MarkText.")
             for flag in overview["recent_flags"]:

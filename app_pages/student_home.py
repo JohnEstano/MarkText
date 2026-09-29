@@ -20,7 +20,7 @@ def join():
         state["join_code"] = ""
 
 
-st.title("Hello, {}".format(common.first_name(user)))
+st.title("Hello, {}".format(common.first_name(user)), anchor=False)
 
 with st.container(border=True):
     st.markdown("**Join a class**")
@@ -36,7 +36,7 @@ if not my_classes:
     st.stop()
 
 work = reports.student_overview(user["username"])
-todo = [w for w in work if w["status"] == "open" and w["my_state"] != "returned"]
+todo = [w for w in work if w["status"] == "open"]
 returned = [w for w in work if w["my_state"] == "returned"]
 
 common.metric_row([
@@ -49,7 +49,7 @@ common.metric_row([
 left, right = st.columns([3, 2], gap="large")
 with left:
     with st.container(border=True):
-        st.subheader("Assignments", icon=":material/assignment:")
+        st.subheader("Assignments", icon=":material/assignment:", anchor=False)
         if not todo:
             st.caption("Nothing open right now.")
         for item in todo:
@@ -64,7 +64,7 @@ with left:
                           type="primary" if item["my_state"] == "not submitted" else "secondary")
     if returned:
         with st.container(border=True):
-            st.subheader("Returned to you", icon=":material/done_all:")
+            st.subheader("Returned to you", icon=":material/done_all:", anchor=False)
             for item in returned:
                 with st.container(horizontal=True, vertical_alignment="center"):
                     with st.container():
@@ -76,7 +76,7 @@ with left:
 
 with right:
     with st.container(border=True):
-        st.subheader("Your classes", icon=":material/school:")
+        st.subheader("Your classes", icon=":material/school:", anchor=False)
         names = accounts.display_names()
         for record in my_classes:
             st.markdown("**{}**".format(record["name"]))

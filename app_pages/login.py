@@ -23,13 +23,13 @@ _, middle, _ = st.columns([1, 1.25, 1])
 with middle:
     st.space("large")
     st.image("static/mark.svg", width=52)
-    st.title("MarkText Classroom")
+    st.title("MarkText Classroom", anchor=False)
     st.caption("A class space for written work. Teachers can tell which submissions were "
                "drafted with MarkText's writing assistant.")
 
     if not accounts.has_teacher():
         with st.container(border=True):
-            st.subheader("Set up the classroom")
+            st.subheader("Set up the classroom", anchor=False)
             st.caption("Create the teacher account. Students register themselves and join your "
                        "classes with a code. More teachers can be added later from the command line.")
             with st.form("setup", border=False):

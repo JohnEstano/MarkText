@@ -22,7 +22,7 @@ state = st.session_state
 PER_PAGE = 15
 SOURCE_TEXT = {"editor": "Typed in the editor", "upload": "Uploaded", "assistant": "Drafted with the assistant"}
 
-st.title("Review")
+st.title("Review", anchor=False)
 mine = classes.list_classes(teacher)
 if not mine:
     common.empty_state("Nothing to review yet", "Create a class and an assignment first; "
@@ -105,7 +105,7 @@ counts = reports.state_counts(frame)
 with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="center"):
         with st.container():
-            st.subheader(task["title"])
+            st.subheader(task["title"], anchor=False)
             due = "Due {}".format(common.day(task["due_at"])) if task["due_at"] else "No due date"
             st.caption("{} · {}".format(names[class_id], due))
         if task["status"] == "open":
@@ -148,98 +148,108 @@ if state.get("review_pick") not in usernames:
     waiting = frame[frame["state"].isin(["awaiting decision", "awaiting detection"])]
     state["review_pick"] = (waiting["username"].iloc[0] if len(waiting) else usernames[0])
 
-table_col, detail_col = st.columns([3, 2], gap="large")
-with table_col:
-    with st.container(border=True):
-        st.subheader("Students")
-        view = pd.DataFrame({
-            "Student": frame["display_name"],
-            "Status": frame["state"].map(lambda s: [s]),
-            "Version": frame["version"],
-            "Handed in": frame["submitted_at"].map(common.when),
-            "Words": frame["words"],
-            "z": frame["z_score"],
-            "Green %": frame["green_pct"],
-            "Detector": frame["label"].map(lambda l: common.verdict_text(l) if l else ""),
-            "Decision": frame["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
-        })
-        pages = max(1, math.ceil(len(view) / PER_PAGE))
-        if state.get("review_page", 1) > pages:
-            state["review_page"] = 1
-        slot = st.empty()
-        if pages > 1:
-            with st.container(horizontal_alignment="right"):
-                current_page = st.pagination(pages, key="review_page")
-        else:
-            current_page = 1
-        start = (current_page - 1) * PER_PAGE
-        state["_review_rows"] = usernames[start:start + PER_PAGE]
-        slot.dataframe(view.iloc[start:start + PER_PAGE], hide_index=True, key="review_table",
-                       on_select=on_table_pick, selection_mode="single-row", column_config={
-                           "Status": st.column_config.MultiselectColumn(
-                               "Status", options=common.STATE_ORDER, color=common.STATE_COLOURS,
-                               format_func=lambda s: common.STATE_BADGE[s][0]),
-                           "Version": st.column_config.NumberColumn(format="%d"),
-                           "Words": st.column_config.NumberColumn(format="%d"),
-                           "z": st.column_config.NumberColumn(format="%.2f", help="z-score: how far the "
-                                                              "green share sits above chance."),
-                           "Green %": st.column_config.ProgressColumn(min_value=0, max_value=100,
-                                                                     format="%.1f"),
-                       })
-        st.caption("Select a row, or pick the student on the right.")
+with st.container(border=True):
+    st.subheader("Students", anchor=False)
+    view = pd.DataFrame({
+        "Student": frame["display_name"],
+        "Status": frame["state"].map(lambda s: [s]),
+        "Handed in": frame["submitted_at"].map(common.when),
+        "Words": frame["words"],
+        "Green %": frame["green_pct"],
+        "z": frame["z_score"],
+        "Detector": frame["label"].map(lambda l: common.verdict_text(l) if l else ""),
+        "Decision": frame["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
+    })
+    pages = max(1, math.ceil(len(view) / PER_PAGE))
+    if state.get("review_page", 1) > pages:
+        state["review_page"] = 1
+    slot = st.empty()
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.caption("Select a row to open that student's work below.")
+        current_page = st.pagination(pages, key="review_page") if pages > 1 else 1
+    start = (current_page - 1) * PER_PAGE
+    state["_review_rows"] = usernames[start:start + PER_PAGE]
+    slot.dataframe(view.iloc[start:start + PER_PAGE], hide_index=True, key="review_table", placeholder="",
+                   on_select=on_table_pick, selection_mode="single-row", column_config={
+                       "Student": st.column_config.TextColumn(width="medium"),
+                       "Status": st.column_config.MultiselectColumn(
+                           "Status", options=common.STATE_ORDER, color=common.STATE_COLOURS,
+                           format_func=lambda s: common.STATE_BADGE[s][0]),
+                       "Words": st.column_config.NumberColumn(format="%d", width="small"),
+                       "Green %": st.column_config.ProgressColumn(
+                           min_value=0, max_value=100, format="%.1f%%",
+                           help="Share of green tokens; chance is 50%."),
+                       "z": st.column_config.NumberColumn(
+                           format="%.2f", width="small",
+                           help="How far the green share sits above chance, in standard errors."),
+                   })
 
-with detail_col:
-    with st.container(border=True):
-        labels = dict(zip(frame["username"], frame["display_name"]))
-        states = dict(zip(frame["username"], frame["state"]))
-        username = common.choose("Student", usernames, "review_pick",
-                                 lambda u: "{} · {}".format(labels[u], common.STATE_BADGE[states[u]][0]))
+labels = dict(zip(frame["username"], frame["display_name"]))
+states = dict(zip(frame["username"], frame["state"]))
+with st.container(border=True):
+    with st.container(horizontal=True, vertical_alignment="bottom"):
+        username = common.choose("Student", usernames, "review_pick", labels.get)
         common.state_badge(states[username])
-        sub = submissions.current_submission(assignment_id, username)
-        if sub is None:
-            st.caption("Nothing handed in yet.")
-        else:
-            side = submissions.sidecar(sub) or {}
-            how = SOURCE_TEXT.get(sub["source"], sub["source"])
-            if sub["source"] == "upload" and sub["upload_filename"]:
-                how += " as {}".format(sub["upload_filename"])
-            gen = side.get("generation")
-            if gen:
-                how += " (seed {}, {} tokens)".format(gen.get("seed"), gen.get("new_tokens"))
-            st.caption("Version {} · {} · {} words · {}".format(
+    sub = submissions.current_submission(assignment_id, username)
+    if sub is None:
+        st.caption("{} has not handed anything in yet.".format(labels[username]))
+    else:
+        side = submissions.sidecar(sub) or {}
+        how = SOURCE_TEXT.get(sub["source"], sub["source"])
+        if sub["source"] == "upload" and sub["upload_filename"]:
+            how += " as {}".format(sub["upload_filename"])
+        gen = side.get("generation")
+        if gen:
+            how += " (seed {}, {} tokens)".format(gen.get("seed"), gen.get("new_tokens"))
+        text_col, score_col = st.columns([3, 2], gap="large")
+        with text_col:
+            st.caption("Version {} · handed in {} · {} words · {}".format(
                 sub["version"], common.when(sub["submitted_at"]), sub["words"], how))
             if sub["version_note"]:
                 st.caption("Student's note: {}".format(sub["version_note"]))
-            with st.container(height=300, border=True):
+            with st.container(height=380, border=True):
                 st.markdown(common.plain(submissions.read_text(sub)))
-
+            older = submissions.versions(assignment_id, username)[:-1]
+            if older:
+                with st.expander("Earlier versions ({})".format(len(older)), icon=":material/history:"):
+                    for version in reversed(older):
+                        with st.container(horizontal=True, vertical_alignment="center"):
+                            note = " · " + version["version_note"] if version["version_note"] else ""
+                            st.markdown("**Version {}** · {} · {} words{}".format(
+                                version["version"], common.when(version["submitted_at"]),
+                                version["words"], note))
+                            with st.popover("Show text", key="old_" + version["submission_id"]):
+                                st.markdown(common.plain(submissions.read_text(version)))
+        with score_col:
             review = reviews.latest_review(sub["submission_id"])
             if review is None:
+                st.markdown("**Not scored yet**")
+                st.caption("Scoring checks the text for this installation's watermark. It takes a "
+                           "second or two per submission.")
                 st.button("Score this submission", type="primary", icon=":material/fact_check:",
                           key="score_one", on_click=request_scoring, args=(sub["submission_id"],))
             else:
                 rid = review["review_id"]
-                with st.container(horizontal=True, vertical_alignment="center"):
-                    common.verdict_badge(review["label"])
-                    st.caption("Scored {} with {}, key {}".format(
-                        common.when(review["detected_at"]), review["model_id"], review["key_id"] or "?"))
+                common.verdict_badge(review["label"])
                 with st.container(horizontal=True):
-                    st.metric("Tokens", review["tokens_scored"], border=True)
-                    st.metric("Green", "{}%".format(review["green_pct"]), border=True,
+                    st.metric("Tokens scored", review["tokens_scored"], border=True)
+                    st.metric("Green share", "{}%".format(review["green_pct"]), border=True,
                               help="Chance level is 50%.")
-                    st.metric("z", review["z_score"], border=True)
+                    st.metric("z-score", review["z_score"], border=True,
+                              help="4 or more: likely MarkText. 2 to 4: possible. Under 100 tokens "
+                                   "scored: inconclusive.")
+                st.caption("Scored {} with {}, key {}.".format(
+                    common.when(review["detected_at"]), review["model_id"], review["key_id"] or "unknown"))
                 current_key = cfg.public_watermark(common.load_config()).get("key_id")
                 if review["key_id"] and current_key and review["key_id"] != current_key:
-                    st.warning("Scored with another key ({}); the current key is {}. Score it again "
-                               "to use the current one.".format(review["key_id"], current_key),
-                               icon=":material/key:")
-                    st.button("Score again", key="score_again", on_click=request_scoring,
-                              args=(sub["submission_id"],))
-
+                    st.warning("Scored with another key ({}); the current key is {}.".format(
+                        review["key_id"], current_key), icon=":material/key:")
+                    st.button("Score again with the current key", key="score_again",
+                              on_click=request_scoring, args=(sub["submission_id"],))
                 st.segmented_control("Decision", ["accepted", "flagged", "needs_review"],
                                      format_func=common.decision_text, key="decision_" + rid,
                                      default=review["decision"] if review["decision"] != "pending" else None)
-                st.text_area("Note to the student", value=review["note"], key="note_" + rid, height=90,
+                st.text_area("Note to the student", value=review["note"], key="note_" + rid, height=100,
                              placeholder="Explain your decision in a sentence or two.")
                 with st.container(horizontal=True, vertical_alignment="center"):
                     st.button("Save decision", key="save_" + rid, on_click=save_decision, args=(rid,))
@@ -247,21 +257,11 @@ with detail_col:
                         st.badge("Returned {}".format(common.when(review["returned_at"])), color="green",
                                  icon=":material/done_all:")
                     elif review["decision"] != "pending":
-                        st.button("Return to student", type="primary", icon=":material/assignment_return:",
-                                  key="return_" + rid, on_click=common.open_dialog, args=("return_work",),
+                        st.button("Return to student", type="primary",
+                                  icon=":material/assignment_return:", key="return_" + rid,
+                                  on_click=common.open_dialog, args=("return_work",),
                                   kwargs={"review_id": rid, "teacher": teacher})
                     else:
-                        st.caption("Save a decision to return the work.")
-
-            older = submissions.versions(assignment_id, username)[:-1]
-            if older:
-                with st.expander("Earlier versions ({})".format(len(older)), icon=":material/history:"):
-                    for version in reversed(older):
-                        st.markdown("**Version {}** · {} · {} words".format(
-                            version["version"], common.when(version["submitted_at"]), version["words"]))
-                        if version["version_note"]:
-                            st.caption(version["version_note"])
-                        with st.popover("Show text", key="old_" + version["submission_id"]):
-                            st.markdown(common.plain(submissions.read_text(version)))
+                        st.caption("Save a decision, then return the work.")
 
 common.render_dialogs({"return_work": dialogs.return_work})

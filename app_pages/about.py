@@ -10,7 +10,7 @@ from classroom import paths
 from ui import common, lab
 
 user = common.current_user()
-st.title("About")
+st.title("About", anchor=False)
 
 if user["role"] == "teacher":
     with st.expander("Files MarkText keeps", icon=":material/folder_open:"):

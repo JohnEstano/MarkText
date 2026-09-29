@@ -110,9 +110,19 @@ def page(path, title, icon, default=False):
     return st.Page(path, title=title, icon=icon, default=default)
 
 
+# Addresses of the pages behind the sign-in (the two home pages live at "/").
+PROTECTED = ("teacher_classes", "teacher_review", "lab_generate", "lab_detect", "lab_history",
+             "lab_experiment", "account", "about", "student_assignment", "student_submissions")
+
+
 def pages_for(user):
     if user is None:
-        return [page("app_pages/login.py", "Sign in", ":material/login:", default=True)]
+        # Sign-in lasts for one browser tab, so a reload lands here signed out.
+        # The sign-in form answers at every protected address too: after
+        # signing in, the person is back on the page they reloaded.
+        return [page("app_pages/login.py", "Sign in", ":material/login:", default=True)] + [
+            st.Page("app_pages/login.py", title="Sign in", icon=":material/login:", url_path=name)
+            for name in PROTECTED]
     account = [page("app_pages/account.py", "Account", ":material/person:"),
                page("app_pages/about.py", "About", ":material/info:")]
     if user["role"] == "teacher":
@@ -169,13 +179,14 @@ def choose(label, options, state_key, format_func=str, **kwargs):
     if current not in options:
         current = options[0]
         state[state_key] = current
-    if state.get(widget_key, current) != current:     # changed from elsewhere: reset the widget
-        del state[widget_key]
+    if state.get(widget_key) != current:
+        # set before the widget is drawn: the browser then shows this value
+        # (deleting the key would leave the browser's old choice on screen)
+        state[widget_key] = current
 
     def sync():
         state[state_key] = state[widget_key]
-    st.selectbox(label, options, index=options.index(current), format_func=format_func,
-                 key=widget_key, on_change=sync, **kwargs)
+    st.selectbox(label, options, format_func=format_func, key=widget_key, on_change=sync, **kwargs)
     return current
 
 
