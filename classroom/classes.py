@@ -241,6 +241,21 @@ def remove_student(class_id, username, by=None):
     return saved
 
 
+def reset_student_password(class_id, username, by):
+    """A temporary password for a student of the teacher's class, returned
+    once for the teacher to hand over; the student must replace it at the
+    next sign-in. Only the class's teacher, only for an active student."""
+    record = get_class(class_id)
+    if record is None or record["teacher"] != by:
+        raise ValueError("Only the class's teacher can reset a student's password.")
+    username = accounts.normalise_username(username)
+    if not is_member(class_id, username):
+        raise ValueError("{} is not an active student of this class.".format(username))
+    temporary = accounts.temporary_password()
+    accounts.reset_password(username, temporary, by=by)
+    return temporary
+
+
 def parse_roster_csv(data):
     """Rows from an uploaded roster file. It needs a header with a
     `username` column; other columns (a display name, an email) are ignored."""

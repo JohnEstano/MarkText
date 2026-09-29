@@ -95,6 +95,50 @@ def get_engine():
     return eng, threading.Lock()
 
 
+def make_scorer(config):
+    """Build the model-free scorer. Tests replace this function with a fake."""
+    import scorer               # late: importing torch is slow
+    return scorer.Scorer(config)
+
+
+@st.cache_resource(show_spinner="Loading the tokenizer...")
+def get_scorer():
+    """One scorer per server process, with its own lock: scoring needs the
+    tokenizer and the model's configuration, never the weights, so the
+    teacher does not wait for the model to load or for a student's draft."""
+    return make_scorer(cfg.load_config()), threading.Lock()
+
+
+def scorer():
+    """(scorer, lock) for detection. A config edited since (a new key, other
+    thresholds) builds a new scorer, which takes about a second."""
+    sc, lock = get_scorer()
+    if cfg.load_config() != sc.config:
+        get_scorer.clear()
+        sc, lock = get_scorer()
+    return sc, lock
+
+
+@st.cache_resource(show_spinner="Loading the tokenizer...")
+def get_retired_scorer(key_id, fingerprint):
+    """A scorer for a retired key (see config.rotate_key), one per key id;
+    `fingerprint` (the config without keys) makes an edited config build a
+    new one."""
+    return make_scorer(cfg.config_for_key(cfg.load_config(), key_id)), threading.Lock()
+
+
+def scorer_for(submission):
+    """(scorer, lock) for one submission: an assistant draft is scored with
+    the key it was made with when that key has been retired; everything
+    else with the current key."""
+    from classroom import detection     # late: detection imports history
+    config = cfg.load_config()
+    key_id = detection.drafted_with(submission)
+    if key_id and key_id != config["watermark"]["key_id"] and cfg.config_for_key(config, key_id):
+        return get_retired_scorer(key_id, repr(cfg.redacted(config)))
+    return scorer()
+
+
 def engine():
     """(engine, lock), loading the model on first use. A config edited since
     the model loaded (a new key, other thresholds) is adopted first, so a
@@ -458,6 +502,28 @@ def highlighted(text, start, end, colour="orange"):
               for line in text[start:end].split("\n")]
     body = _escape(text[:start]) + "\n".join(marked) + _escape(text[end:])
     return "  \n".join(body.split("\n"))
+
+
+def draft_changes(draft, final):
+    """How much of the assistant's draft is still in the handed-in text, and
+    the text with the changes marked: words kept as they are, added words on
+    green, removed words struck through on red. Compared word by word
+    (difflib.SequenceMatcher). Returns (share of draft words kept, markdown)."""
+    import difflib
+    a, b = draft.split(), final.split()
+    if not a:
+        return 0.0, plain(final)
+    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    kept = sum(block.size for block in matcher.get_matching_blocks())
+    parts = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            parts.append(md(" ".join(b[j1:j2])))
+        if tag in ("delete", "replace"):
+            parts.append(":red-background[~~{}~~]".format(md(" ".join(a[i1:i2]))))
+        if tag in ("insert", "replace"):
+            parts.append(":green-background[{}]".format(md(" ".join(b[j1:j2]))))
+    return kept / len(a), " ".join(parts)
 
 
 def passage_decided(review, config):

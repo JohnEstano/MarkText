@@ -49,6 +49,7 @@ if not titles:
     common.empty_state("This class has no assignments", "Create one on the Classes page.", "assignment")
     st.stop()
 task = assignments.get_assignment(assignment_id)
+graded = assignments.max_points(task)          # None when the assignment has no points
 
 
 # ------------------------------------------------------------ callbacks
@@ -57,17 +58,23 @@ def request_scoring(what):
 
 
 def keep_draft(review_id):
-    """Remember an unsaved decision and note: Streamlit forgets a widget's
-    value when another student is shown, and a half-written note must not
-    be lost by looking at someone else's work."""
+    """Remember an unsaved decision, note and points: Streamlit forgets a
+    widget's value when another student is shown, and a half-written note
+    must not be lost by looking at someone else's work."""
     state["review_drafts"][review_id] = {"decision": state.get("decision_" + review_id),
-                                         "note": state.get("note_" + review_id, "")}
+                                         "note": state.get("note_" + review_id, ""),
+                                         "points": state.get("points_" + review_id)}
 
 
 def save_decision(review_id):
     decision = state.get("decision_" + review_id)
+    points = None
+    if graded:
+        given = state.get("points_" + review_id)
+        points = "" if given is None else given
     try:
-        reviews.decide(review_id, decision or "pending", state.get("note_" + review_id, ""), teacher)
+        reviews.decide(review_id, decision or "pending", state.get("note_" + review_id, ""), teacher,
+                       points=points)
     except ValueError as exc:
         common.flash(str(exc), ":material/error:")
     else:
@@ -114,7 +121,7 @@ if request and request["assignment_id"] == assignment_id:
     todo = (detection.pending(assignment_id) if request["what"] == "all"
             else [s for s in [submissions.get_submission(request["what"])] if s])
     if todo:
-        engine, lock = common.engine()
+        engine, lock = common.scorer()           # no model needed to score
         with st.status("Scoring {} submission{}...".format(len(todo), "" if len(todo) == 1 else "s"),
                        expanded=True) as status:
             st.button("Stop after this one", icon=":material/stop_circle:", key="detect_stop",
@@ -125,7 +132,8 @@ if request and request["assignment_id"] == assignment_id:
                 outcome = common.verdict_text(review["label"]) if review else "skipped"
                 bar.progress(done / total, text="{}/{}  {}: {}".format(
                     done, total, common.md(common.display_name(submission["username"])), outcome))
-            run = detection.detect_many(engine, lock, todo, teacher, on_progress=progress)
+            run = detection.detect_many(engine, lock, todo, teacher, on_progress=progress,
+                                        pick=common.scorer_for)
             scored = len(run["written"])
             for submission, reason in run["skipped"]:
                 st.warning("{}: {}".format(common.md(common.display_name(submission["username"])),
@@ -171,6 +179,11 @@ with st.container(horizontal=True, vertical_alignment="center"):
     st.button("Score all not scored ({})".format(pending), type="primary", icon=":material/fact_check:",
               key="score_all", disabled=pending == 0, on_click=request_scoring, args=("all",),
               help="Runs the watermark detector on every submission that has no score yet.")
+    decided = [r for r in frame.loc[frame["state"] == "decided", "review_id"]]
+    st.button("Return all decided ({})".format(len(decided)), icon=":material/assignment_return:",
+              key="return_all", disabled=not decided, on_click=common.open_dialog, args=("return_all",),
+              kwargs={"review_ids": decided, "teacher": teacher},
+              help="Shows every decided student their decision and note in one go.")
     with st.popover("Add students' files", icon=":material/upload_file:"):
         st.markdown("Hand in work that reached you outside MarkText. Name each file after the "
                     "student's username (**alice.txt**); each becomes a new version, nothing is "
@@ -215,7 +228,10 @@ with st.container(border=True):
         "Detector": frame["label"].map(lambda l: common.verdict_text(l) if l else ""),
         "Decision": frame["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
         "Earlier flag": frame["earlier_flag"],
+        "Late": frame["late"],
     })
+    if graded:
+        view["Points"] = frame["points"]
     pages = max(1, math.ceil(len(view) / PER_PAGE))
     if state.get("review_page", 1) > pages:
         state["review_page"] = 1
@@ -241,6 +257,10 @@ with st.container(border=True):
                        "Earlier flag": st.column_config.CheckboxColumn(
                            width="small", help="An earlier version was flagged or scored as likely "
                                                "MarkText before this one was handed in."),
+                       "Late": st.column_config.CheckboxColumn(
+                           width="small", help="Handed in after the due date."),
+                       "Points": st.column_config.NumberColumn(
+                           format="%g", width="small", help="Out of {}.".format(graded)),
                    })
 
 labels = dict(zip(frame["username"], frame["display_name"]))
@@ -264,8 +284,10 @@ with st.container(border=True):
             how += " (seed {}, {} tokens)".format(gen.get("seed"), gen.get("new_tokens"))
         text_col, score_col = st.columns([3, 2], gap="large")
         with text_col:
-            st.caption("Version {} · handed in {} · {} words · {}".format(
-                sub["version"], common.when(sub["submitted_at"]), sub["words"], how))
+            st.caption("Version {} · handed in {}{} · {} words · {}".format(
+                sub["version"], common.when(sub["submitted_at"]),
+                " (after the due date)" if assignments.is_late(task, sub["submitted_at"]) else "",
+                sub["words"], how))
             if sub["version_note"]:
                 st.caption("Student's note: {}".format(common.md(sub["version_note"])))
             review = reviews.latest_review(sub["submission_id"])
@@ -277,6 +299,15 @@ with st.container(border=True):
                     st.markdown(common.highlighted(text, review["passage_start"], review["passage_end"]))
                 elif text is not None:
                     st.markdown(common.plain(text))
+            drafted = (gen or {}).get("text")
+            if text is not None and drafted:
+                kept, marked = common.draft_changes(drafted, text)
+                st.caption(":material/difference: {:.0%} of the assistant's draft is still in this "
+                           "version, word for word.".format(kept))
+                with st.expander("Changes from the assistant's draft", icon=":material/difference:"):
+                    st.caption("Green: added by the student. Struck through: the assistant's words the "
+                               "student removed.")
+                    st.markdown(marked)
             if text is not None and not submissions.intact(sub):
                 st.warning("This text was changed after it was handed in: its SHA-256 fingerprint no "
                            "longer matches the one recorded at hand-in. Scores are of the text as it "
@@ -317,12 +348,20 @@ with st.container(border=True):
                     st.caption(note)
                 st.caption("Scored {} with {}, key {}.".format(
                     common.when(review["detected_at"]), review["model_id"], review["key_id"] or "unknown"))
-                current_key = cfg.public_watermark(common.load_config()).get("key_id")
+                config = common.load_config()
+                current_key = config["watermark"]["key_id"]
+                own_key = detection.drafted_with(sub)
                 if review["key_id"] and current_key and review["key_id"] != current_key:
-                    st.warning("Scored with another key ({}); the current key is {}.".format(
-                        review["key_id"], current_key), icon=":material/key:")
-                    st.button("Score again with the current key", key="score_again",
-                              on_click=request_scoring, args=(sub["submission_id"],))
+                    retired = cfg.config_for_key(config, review["key_id"]) is not None
+                    if own_key and own_key == review["key_id"] and retired:
+                        st.caption("Scored with key {}, the key this draft was made with (since "
+                                   "retired; the current key is {}).".format(review["key_id"], current_key))
+                    else:
+                        st.warning("Scored with another key ({}); the current key is {}.".format(
+                            review["key_id"], current_key), icon=":material/key:")
+                        st.button("Score again", key="score_again",
+                                  on_click=request_scoring, args=(sub["submission_id"],),
+                                  help="With the key the draft was made with, or else the current key.")
                 draft = state["review_drafts"].get(rid)
                 saved_decision = review["decision"] if review["decision"] != "pending" else None
                 st.segmented_control("Decision", ["accepted", "flagged", "needs_review"],
@@ -332,7 +371,13 @@ with st.container(border=True):
                 st.text_area("Note to the student", value=draft["note"] if draft else review["note"],
                              key="note_" + rid, height=100, on_change=keep_draft, args=(rid,),
                              placeholder="Explain your decision in a sentence or two.")
-                if draft and (draft["decision"], draft["note"]) != (saved_decision, review["note"]):
+                saved_points = float(review["points"]) if review.get("points") else None
+                if graded:
+                    st.number_input("Points (out of {})".format(graded), min_value=0.0, max_value=float(graded),
+                                    step=0.5, key="points_" + rid, on_change=keep_draft, args=(rid,),
+                                    value=draft["points"] if draft else saved_points, format="%g")
+                if draft and (draft["decision"], draft["note"], draft["points"] if graded else None) != \
+                        (saved_decision, review["note"], saved_points if graded else None):
                     st.caption(":material/edit_note: Not saved yet.")
                 changed = reviews.changed_since_return(review)
                 if changed:
@@ -359,4 +404,4 @@ with st.container(border=True):
                     else:
                         st.caption("Save a decision, then return the work.")
 
-common.render_dialogs({"return_work": dialogs.return_work})
+common.render_dialogs({"return_work": dialogs.return_work, "return_all": dialogs.return_all})

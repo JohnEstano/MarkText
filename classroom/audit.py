@@ -43,6 +43,7 @@ ACTIONS = {
     "exported": "Exported",
     "backup_restored": "Restored a backup",
     "integrity_checked": "Checked the files",
+    "key_rotated": "Replaced the watermark key",
 }
 log = logging.getLogger("marktext.audit")
 

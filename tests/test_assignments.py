@@ -56,3 +56,17 @@ def test_overdue_reads_dates_saved_by_excel_and_ignores_garbage():
     assert assignments.is_overdue({"due_at": "10/15/2026"}, today)
     assert not assignments.is_overdue({"due_at": "next week"}, today)
     assert not assignments.is_overdue({"due_at": ""}, today)
+
+
+def test_points_and_lateness(course):
+    aid = course["assignment"]["assignment_id"]                   # due 2026-10-15
+    assert assignments.max_points(course["assignment"]) is None
+    assignments.update_assignment(aid, by="prof", points=20)
+    task = assignments.get_assignment(aid)
+    assert assignments.max_points(task) == 20
+    for bad in (0, 1001, 2.5, "ten"):
+        with pytest.raises(ValueError):
+            assignments.update_assignment(aid, by="prof", points=bad)
+    assert not assignments.is_late(task, "2026-10-15 23:59:00")       # the whole due day counts
+    assert assignments.is_late(task, "2026-10-16 00:00:01")
+    assert not assignments.is_late(dict(task, due_at=""), "2030-01-01 00:00:00")

@@ -29,7 +29,7 @@ if analyze:
     if not text:
         col_in.error("Paste or open a text first.", icon=":material/error:")
     else:
-        engine, lock = common.engine()
+        engine, lock = common.scorer()           # the tokenizer is enough; no model
         try:
             with st.spinner("Analyzing..."):
                 with lock:

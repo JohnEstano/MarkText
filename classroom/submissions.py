@@ -30,7 +30,7 @@ STATUSES = ("current", "superseded")
 MAX_CHARS = 50_000
 MAX_NOTE = 200
 # what an assistant draft may record about itself (never the hashing key)
-GENERATION_KEYS = ("prompt", "seed", "mode", "model_id", "max_new_tokens", "new_tokens",
+GENERATION_KEYS = ("prompt", "text", "seed", "mode", "model_id", "max_new_tokens", "new_tokens",
                    "device", "key_id", "cancelled")
 
 

@@ -22,8 +22,9 @@ It runs on an ordinary laptop with no GPU and no cloud service.
 - Home page with what needs attention across all classes and the most recent flags
 - Classes with a join code (six characters, no look-alike letters), a new code on demand, archive and restore
 - Roster: students who joined with the code, a CSV roster import (registered students are enrolled; unknown usernames are invited and become members when they join with the class code, since anyone could register a name first), removal that keeps the history, and a roster export
-- Assignments with instructions and a due date; close and reopen
-- Review page: every student with their state (not submitted, not scored, scored, decided, returned), the submitted text and all earlier versions, scoring one or all submissions, the detector's numbers, a decision (accepted, flagged, needs review) with a note, and returning the work
+- Assignments with instructions, a due date and optional points; edit, close and reopen; classes can be renamed
+- Review page: every student with their state (not submitted, not scored, scored, decided, returned), late and earlier-flag markers, the submitted text and all earlier versions, scoring one or all submissions, the detector's numbers (with the strongest passage highlighted when it decided the verdict), a decision (accepted, flagged, needs review) with a note and points, returning one or all decided submissions. For a text started from the assistant's draft, how much of the draft is still in it and a word-by-word view of what the student changed
+- One student's work across a class, every version; a temporary password for a student who forgot theirs (they choose their own at the next sign-in)
 - Reports: the assignment table and a class summary, each saved as a new CSV and downloaded; a whole class (roster, assignments, every version with its sidecar, reviews, summary) as one zip
 - Students' files: work that arrived outside MarkText (e-mail, a USB stick) handed in from text files named after the students (`alice.txt`), each as a new version
 - Records: the activity log (who did what, when; filter and export), a file check (every text on disk and unchanged, every row pointing at something that exists, no foreign columns, no half-written files) and the backup copies, any of which can be put back after a check
@@ -32,7 +33,7 @@ It runs on an ordinary laptop with no GPU and no cloud service.
 - Register, join classes with a code, see open assignments and returned work
 - Write in the editor or upload a `.txt` file; every hand-in is a new version and none is overwritten
 - **Draft with the assistant** (can be switched off): a watermarked first draft, recorded with its seed in the submission's sidecar
-- The teacher's decision and note after the work is returned (the detector's numbers stay on the teacher's side)
+- The teacher's decision, note and points after the work is returned (the detector's numbers stay on the teacher's side); a decision the teacher changes afterwards shows only when it is returned again
 
 **Lab** (teacher only): Generate (normal or watermarked, save as TXT + JSON sidecar), Detect (any text), History (a dashboard over every detection), Experiment (true- and false-positive rates over many prompts).
 
@@ -65,7 +66,15 @@ MarkText *uses* Hugging Face's implementation of the watermark: the same `Waterm
 
 At each generation step the vocabulary is split into a green list and a red list by a seeded shuffle. The seed comes from a secret key and the recent tokens (with `selfhash`, the candidate token itself is included). Green-list logits get a constant bias added before sampling, so green tokens are favoured but not forced.
 
-At detection time the scorer re-tokenizes the text, recomputes the green list at every position, and counts green tokens. A repeated n-gram (the same context and token again) is counted once: its colour is fixed by the key, so a second copy of a phrase is not new evidence, and counting it again inflates z on human text that repeats itself (the recommendation of arXiv:2306.04634). Under the null hypothesis "the writer did not know the key", each distinct scored n-gram is green with probability `greenlist_ratio`, so the count is binomial and
+At detection time the scorer re-tokenizes the text, recomputes the green list at every position, and counts green tokens. A token whose colour is already known is counted once. The colour is fixed by the green list, and the green list only by the seed the key derives from the context; with `selfhash` the seed is the smallest of five products over the window, so it often depends on just two tokens, and the same word after different phrases gets the same colour every time. Counting those repeats inflates z on human text, so each (seed, token) pair counts once (arXiv:2306.04634 recommends ignoring repeats). Measured on 8 human texts under 100 random keys (800 scores):
+
+| Counting | Spread of z (1 is right) | Human text at z ≥ 2 (promised 2.3%) | at z ≥ 4 (promised 0.003%) |
+|---|---|---|---|
+| every position (the library's detector) | 1.33 | 7.4% | 0.5% |
+| each 5-token n-gram once | 1.24 | 5.8% | 0 |
+| each (seed, token) pair once (MarkText) | 1.02 | 2.4% | 0 |
+
+The price is less evidence per text: a fully drafted 196-token assistant essay that scored 4.14 counting every position scores 3.81 counting correlated repeats once (172 independent tokens), so the assistant offers 250 tokens by default. Under the null hypothesis "the writer did not know the key", each distinct scored (seed, token) pair is green with probability `greenlist_ratio`, so the count is binomial and
 
     z = (green − γ·T) / sqrt(T·γ·(1 − γ)),   p = P(Z ≥ z)
 
@@ -87,6 +96,8 @@ All four numbers live in `config/watermark_config.json` and are applied in one p
 The hashing key is a shared secret: whoever holds it can verify the watermark and can also produce text that carries it. On first run MarkText generates a private key and writes it to `config/watermark_config.json`, which is git-ignored; `config/watermark_config.example.json` shows the schema. Changing the key makes previously generated text undetectable, so texts are tied to the installation that made them. If a config carries Hugging Face's public default key (15485863), the teacher's home page and the desktop app warn about it.
 
 The key never leaves the config file: generation results, sidecars, reports and the About page show only the public parameters (`config.public_watermark`) and a **key id**, a random label stored beside the key and regenerated with it. A review records the key id it was scored with, so the review page can say when a submission was scored under an older key. The key id is random on purpose: any hash of a 31-bit key could be reversed by trying every value.
+
+If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one and keeps the old one under `watermark.retired_keys`. An assistant draft is always scored with the key its sidecar names, so drafts made before the rotation are still recognised; texts typed or uploaded by people are scored with the current key.
 
 ## Files
 
@@ -143,9 +154,11 @@ Students read their assignments and their own files, and write one TXT + JSON pa
 Requires **Python 3.11+**.
 
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
+
+`requirements.txt` pins the versions the tests pass with. The scorer reads the green lists and the seed of transformers' `WatermarkLogitsProcessor`, so a different transformers version could score the same text differently; `tests/test_golden.py` scores a committed essay with the real tokenizer and fails if the numbers move. Upgrade on purpose, run the tests, and re-score if needed. GitHub Actions runs the suite on every push (`.github/workflows/tests.yml`).
 
 ## Running
 
@@ -174,7 +187,10 @@ More teachers, and password resets, from the command line:
 python -m classroom.cli create-teacher reyes --display-name "Prof. Reyes"
 python -m classroom.cli list-users
 python -m classroom.cli reset-password alice
+python -m classroom.cli rotate-key
 ```
+
+While changing the code, let Streamlit reload pages when files change (the config turns this off, because a classroom server should not reload under its users): `streamlit run app.py --server.fileWatcherType auto --server.runOnSave true`.
 
 To switch the student's assistant off, set `"assistant_enabled": false` under `"classroom"` in `config/watermark_config.json`; the rest of the system is unchanged.
 
@@ -233,7 +249,7 @@ Reading it: at 150 tokens the threshold of 4.0 catches 86 of 100 watermarked tex
 - The key is a symmetric secret: leaking it allows forgery; rotating it orphans old texts (reviews say which key scored them).
 - Sign-in lasts for one browser tab: reloading the page signs you out, and so do 30 idle minutes (`classroom.idle_minutes` in the config). After five wrong passwords for one username, sign-in pauses for 30 seconds after each further failure; a wrong username takes as long as a wrong password, so failures do not reveal which accounts exist. These protect a classroom server, not a public website: there is no e-mail verification, and the server answers only on `localhost` unless you add a host to `server.allowedHosts` in `.streamlit/config.toml`.
 - Names, titles and notes that people type are shown as text, never as Markdown, so a display name cannot become a link or an image on the teacher's page.
-- Detection assumes independent scored positions. Repeated n-grams are counted once; overlapping n-grams still share tokens, so the z-score remains an approximation.
+- Detection assumes independent scored tokens. Counting each (seed, token) pair once makes that hold on the texts measured (spread 1.02); it is still an approximation, and the thresholds are checked by the experiment rather than taken on trust.
 - The underlying model generates from its own training data; MarkText does not claim ownership of it.
 
 ## Assignment requirements mapping

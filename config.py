@@ -59,6 +59,9 @@ DEFAULT_CONFIG = {
         "hashing_key": None,
         # random public label of the key above; regenerated with the key
         "key_id": None,
+        # keys replaced by rotate_key(), kept so drafts made with them can
+        # still be scored: [{"hashing_key": ..., "key_id": ...}]
+        "retired_keys": [],
         # count a repeated (context, token) n-gram once: a second copy of a
         # phrase is not new evidence (scorer.py, arXiv:2306.04634)
         "ignore_repeated_ngrams": True,
@@ -118,11 +121,48 @@ def public_watermark(config):
 
 
 def redacted(config):
-    """A copy of the config that is safe to display: the key is hidden."""
+    """A copy of the config that is safe to display: the keys are hidden
+    (retired keys are shown by their key id only)."""
     shown = copy.deepcopy(config)
-    if "hashing_key" in shown.get("watermark", {}):
-        shown["watermark"]["hashing_key"] = "(hidden)"
+    wm = shown.get("watermark", {})
+    if "hashing_key" in wm:
+        wm["hashing_key"] = "(hidden)"
+    if wm.get("retired_keys"):
+        wm["retired_keys"] = ["{} (hidden)".format(k.get("key_id")) for k in wm["retired_keys"]]
     return shown
+
+
+def config_for_key(config, key_id):
+    """A copy of the config that scores with the key labelled key_id (the
+    current one or a retired one), or None when no key has that label."""
+    wm = config["watermark"]
+    if key_id == wm.get("key_id"):
+        return config
+    for old in wm.get("retired_keys", []):
+        if old["key_id"] == key_id:
+            chosen = copy.deepcopy(config)
+            chosen["watermark"].update(hashing_key=old["hashing_key"], key_id=old["key_id"])
+            return chosen
+    return None
+
+
+def rotate_key(path=None):
+    """Replace the hashing key with a new one, keeping the old key under
+    retired_keys: drafts made with it can then still be scored (the
+    classroom scores a draft with the key its sidecar names). Use it when
+    the key may have leaked. Returns (old key id, new key id)."""
+    path = pathlib.Path(path or CONFIG_PATH)
+    config = load_config(path)
+    wm = config["watermark"]
+    old = {"hashing_key": wm["hashing_key"], "key_id": wm["key_id"]}
+    wm["retired_keys"] = wm.get("retired_keys", []) + [old]
+    wm["hashing_key"] = new_hashing_key()
+    wm["key_id"] = new_key_id()
+    while wm["key_id"] in {k["key_id"] for k in wm["retired_keys"]}:
+        wm["key_id"] = new_key_id()
+    validate_config(config)
+    save_config(config, path)
+    return old["key_id"], wm["key_id"]
 
 
 def validate_config(config):
@@ -164,6 +204,14 @@ def validate_config(config):
          "watermark.key_id must be 8 lowercase hex characters or null")
     need(isinstance(wm.get("ignore_repeated_ngrams"), bool),
          "watermark.ignore_repeated_ngrams must be true or false")
+    retired = wm.get("retired_keys")
+    need(isinstance(retired, list) and all(
+        isinstance(k, dict) and isinstance(k.get("hashing_key"), int) and k["hashing_key"] > 0
+        and isinstance(k.get("key_id"), str) and KEY_ID_PATTERN.fullmatch(k["key_id"]) for k in retired),
+        "watermark.retired_keys must be a list of {\"hashing_key\": positive integer, "
+        "\"key_id\": 8 hex characters}")
+    ids = [k["key_id"] for k in retired] + [key_id]
+    need(len(ids) == len(set(ids)), "watermark key ids must all be different")
 
     need(config.get("possible_threshold", 0) > 0, "possible_threshold must be > 0")
     need(config.get("detection_threshold", 0) > config["possible_threshold"],

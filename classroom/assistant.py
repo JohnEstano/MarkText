@@ -19,6 +19,10 @@ config/watermark_config.json. To remove it:
 
 MIN_TOKENS = 50
 MAX_PROMPT = 1000
+# the lengths offered: from 150, because a draft needs about 100 scored
+# tokens for a verdict and some tokens are not scored (the first few, and
+# repeats); a 100-token draft always came back inconclusive
+LENGTHS = (150, 200, 250, 300)
 
 
 def enabled(config):
@@ -45,8 +49,11 @@ def draft(engine, lock, prompt, max_new_tokens=None, cancel_event=None):
 
 
 def generation_record(info, prompt):
-    """What a submission's sidecar keeps about a draft (never the key)."""
+    """What a submission's sidecar keeps about a draft (never the key): how
+    it was made, and the draft itself, so the teacher can see what the
+    student changed."""
     return {"prompt": prompt,
+            "text": info.get("text", ""),
             "seed": info.get("seed"),
             "mode": info.get("mode"),
             "model_id": info.get("model_id"),

@@ -4,13 +4,14 @@ browser after the first one, so this is how a second teacher is added.
     python -m classroom.cli create-teacher reyes --display-name "Prof. Reyes"
     python -m classroom.cli list-users
     python -m classroom.cli reset-password alice
+    python -m classroom.cli rotate-key       # a new watermark key; the old one is kept
 """
 
 import argparse
 import getpass
 import sys
 
-from classroom import accounts, paths
+from classroom import accounts, audit, paths
 
 
 def _ask_password():
@@ -28,6 +29,7 @@ def main(argv=None):
     teacher.add_argument("username")
     teacher.add_argument("--display-name", default="")
     sub.add_parser("list-users", help="list every account (never the passwords)")
+    sub.add_parser("rotate-key", help="replace the watermark key (the old one is kept for old drafts)")
     reset = sub.add_parser("reset-password", help="set a new password for an account")
     reset.add_argument("username")
     args = parser.parse_args(argv)
@@ -44,6 +46,12 @@ def main(argv=None):
             for u in users:
                 print("{:<24} {:<8} {:<30} last sign-in {}".format(
                     u["username"], u["role"], u["display_name"], u["last_login"] or "never"))
+        elif args.command == "rotate-key":
+            import config as cfg
+            old, new = cfg.rotate_key()
+            audit.record("command line", "key_rotated", new, "replaced key {}".format(old))
+            print("New key id {}. The old key ({}) is kept under watermark.retired_keys, so drafts "
+                  "made with it are still scored with it. Restart the app to use the new key.".format(new, old))
         elif args.command == "reset-password":
             if not accounts.exists(args.username):
                 raise ValueError("There is no user {}.".format(args.username))

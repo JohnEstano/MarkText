@@ -128,13 +128,18 @@ if returned:
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Your teacher's decision", icon=":material/assignment_return:", anchor=False)
             common.decision_badge(shown["decision"])
+            if shown.get("points") and task.get("points"):
+                st.badge("{:g} / {} points".format(float(shown["points"]), task["points"]), color="blue",
+                         icon=":material/grade:")
         st.caption("On version {}, returned {}".format(current["version"], common.when(shown["returned_at"])))
         if shown["note"]:
             st.markdown(common.plain(shown["note"]))
 
 if current:
-    with st.expander("What you handed in: version {}, {}".format(
-            current["version"], common.when(current["submitted_at"])), icon=":material/visibility:"):
+    with st.expander("What you handed in: version {}, {}{}".format(
+            current["version"], common.when(current["submitted_at"]),
+            " (after the due date)" if assignments.is_late(task, current["submitted_at"]) else ""),
+            icon=":material/visibility:"):
         text = common.submission_text(current)
         if text is not None:
             st.markdown(common.plain(text))
@@ -178,9 +183,10 @@ with help_col:
                 prompt = st.text_area("What should it write?", value=task["title"], height=90,
                                       key="assistant_prompt_" + assignment_id)
                 limit = assistant.max_tokens(config)
-                lengths = sorted(v for v in {100, 150, 200, limit} if v <= limit)
-                length = st.select_slider("Length (tokens)", options=lengths, value=min(200, limit),
-                                          key="assistant_length_" + assignment_id)
+                lengths = sorted(v for v in set(assistant.LENGTHS) | {limit} if v <= limit)
+                length = st.select_slider("Length (tokens)", options=lengths, value=min(250, limit),
+                                          key="assistant_length_" + assignment_id,
+                                          help="Shorter drafts give too little evidence for a verdict.")
                 ask = st.form_submit_button("Write a draft", icon=":material/auto_awesome:",
                                             key="assistant_go")
             if ask:

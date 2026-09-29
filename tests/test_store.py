@@ -190,3 +190,20 @@ def test_only_the_newest_backups_are_kept(data_dir, monkeypatch):
     copies = store.backups_of("classes", ".json")
     assert len(copies) == 3
     assert [json.loads(c.read_text(encoding="utf-8"))["n"] for c in copies] == [2, 3, 4]
+
+
+def test_reads_are_cached_until_the_file_changes(data_dir):
+    path = data_dir / "t.csv"
+    store.append_row(path, ["a"], {"a": "1"})
+    first = store.read_rows(path, ["a"])
+    first[0]["a"] = "changed by the caller"                    # a copy: the cache is untouched
+    assert store.read_rows(path, ["a"]) == [{"a": "1"}]
+    store.append_row(path, ["a"], {"a": "2"})
+    assert [r["a"] for r in store.read_rows(path, ["a"])] == ["1", "2"]
+    store.rewrite_rows(path, ["a"], [{"a": "3"}])
+    assert store.read_rows(path, ["a"]) == [{"a": "3"}]
+    j = data_dir / "t.json"
+    store.write_json(j, {"n": 1})
+    assert store.read_json(j, {}) == {"n": 1}
+    store.write_json(j, {"n": 2})
+    assert store.read_json(j, {}) == {"n": 2}

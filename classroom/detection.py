@@ -87,7 +87,14 @@ def pending(assignment_id):
     return sorted(rows, key=lambda s: s["submitted_at"])
 
 
-def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event=None):
+def drafted_with(submission):
+    """The key id an assistant draft was made with (from its sidecar), or
+    None for a text typed or uploaded by a person."""
+    side = submissions.sidecar(submission) or {}
+    return (side.get("generation") or {}).get("key_id")
+
+
+def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event=None, pick=None):
     """Score several submissions; the same loop shape as experiment.run_batch.
 
     cancel_event is checked before each one; on_progress(done, total,
@@ -95,6 +102,10 @@ def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event
     skipped). A submission whose text is missing is skipped and listed. A
     file that cannot be written stops the run, because every later one would
     fail the same way; what was scored before stays scored.
+
+    pick(submission) -> (engine, lock), when given, chooses the scorer for
+    each submission (the classroom scores a draft with the key it was made
+    with, which may be a retired one).
 
     Returns {"written": [reviews], "skipped": [(submission, reason)],
     "stopped": reason or None}."""
@@ -104,8 +115,9 @@ def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event
         if cancel_event is not None and cancel_event.is_set():
             break
         review = None
+        use, use_lock = pick(submission) if pick else (engine, lock)
         try:
-            review = detect_submission(engine, lock, submission, detected_by)
+            review = detect_submission(use, use_lock, submission, detected_by)
         except submissions.MissingText as exc:
             result["skipped"].append((submission, str(exc)))
         except store.FileProblem as exc:

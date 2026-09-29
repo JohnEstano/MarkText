@@ -1,6 +1,6 @@
 import pytest
 
-from classroom import reviews, submissions
+from classroom import assignments, reviews, submissions
 
 STATS = {"num_tokens_scored": 146, "num_green_tokens": 106, "green_fraction": 106 / 146,
          "z_score": 5.4612, "p_value": 2.818e-09, "label": "LIKELY MARKTEXT", "device": "cpu"}
@@ -66,7 +66,7 @@ def test_a_decision_changed_after_return_waits_for_the_next_return(course):
     again = reviews.get_review(rid)
     assert not reviews.changed_since_return(again)
     assert reviews.shown_to_student(again) == {"decision": "flagged", "note": "Please come and see me.",
-                                               "returned_at": again["returned_at"]}
+                                               "points": "", "returned_at": again["returned_at"]}
 
 
 def test_a_row_returned_before_the_snapshot_columns_shows_its_decision(course):
@@ -96,3 +96,24 @@ def test_the_strongest_passage_is_kept_with_the_review(course):
     assert rev["repeated"] == "2"
     plain = reviews.record_detection(sub, STATS, "run2", "fake/model", "0a1b2c3d", "prof")
     assert plain["passage_z"] == "" and plain["passage_start"] == ""
+
+
+def test_points_are_checked_kept_and_returned(course):
+    task = course["assignment"]
+    sub, rev = _review(course)
+    with pytest.raises(ValueError, match="no points"):
+        reviews.decide(rev["review_id"], "accepted", "", "prof", points=5)
+    assignments.update_assignment(task["assignment_id"], by="prof", points=10)
+    with pytest.raises(ValueError, match="0 to 10"):
+        reviews.decide(rev["review_id"], "accepted", "", "prof", points=11)
+    with pytest.raises(ValueError, match="steps of 0.5"):
+        reviews.decide(rev["review_id"], "accepted", "", "prof", points=7.25)
+    reviews.decide(rev["review_id"], "accepted", "Good", "prof", points=8.5)
+    reviews.return_to_student(rev["review_id"], by="prof")
+    assert reviews.shown_to_student(reviews.get_review(rev["review_id"]))["points"] == "8.5"
+    reviews.decide(rev["review_id"], "accepted", "Good", "prof", points=9)
+    changed = reviews.get_review(rev["review_id"])
+    assert reviews.changed_since_return(changed)                    # new points wait for a return
+    assert reviews.shown_to_student(changed)["points"] == "8.5"
+    reviews.decide(rev["review_id"], "accepted", "Good", "prof")   # points=None keeps them
+    assert reviews.get_review(rev["review_id"])["points"] == "9"

@@ -44,7 +44,7 @@ def test_assistant_generation_is_recorded_without_the_key(course):
                              generation=gen)
     side = submissions.sidecar(row)
     assert side["generation"] == {"prompt": "Write about diaries", "seed": 7, "mode": "watermarked",
-                                  "model_id": "m", "key_id": "0a1b2c3d"}
+                                  "model_id": "m", "key_id": "0a1b2c3d", "text": "..."}
     assert "123456789" not in json.dumps(side)
 
 

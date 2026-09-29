@@ -118,7 +118,14 @@ def public(username, record):
             "display_name": record.get("display_name") or username,
             "role": record.get("role", ""),
             "created_at": record.get("created_at", ""),
-            "last_login": record.get("last_login", "")}
+            "last_login": record.get("last_login", ""),
+            "must_change": bool(record.get("must_change"))}
+
+
+def temporary_password():
+    """Three groups of four letters and digits, easy to read out (no 0/O, 1/I)."""
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
 
 
 def _users():
@@ -256,7 +263,9 @@ def change_password(username, old_password, new_password):
 
 def reset_password(username, new_password, by=None):
     """Set a new password without the old one (the command line, or a
-    teacher for a student). `by` is who did it, for the activity log."""
+    teacher for a student). `by` is who did it, for the activity log. When
+    someone else sets it, the account must choose its own at the next
+    sign-in (must_change); choosing one clears that."""
     username = normalise_username(username)
     validate_password(new_password, username)
     hashed = hash_password(new_password)
@@ -265,6 +274,10 @@ def reset_password(username, new_password, by=None):
         if username not in data["users"]:
             raise ValueError("There is no user {}.".format(username))
         data["users"][username]["password"] = hashed
+        if by is not None and by != username:
+            data["users"][username]["must_change"] = True
+        else:
+            data["users"][username].pop("must_change", None)
     store.update_json(paths.users_path(), EMPTY, change)
     audit.record(by, "password_changed" if by == username else "password_reset", username)
 

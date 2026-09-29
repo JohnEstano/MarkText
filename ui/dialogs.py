@@ -6,7 +6,7 @@ import datetime
 
 import streamlit as st
 
-from classroom import assignments, classes, reviews
+from classroom import assignments, classes, reviews, store
 from ui import common
 
 
@@ -44,19 +44,93 @@ def create_assignment(class_id, teacher):
         title = st.text_input("Title", placeholder="Why people keep diaries", key="new_task_title")
         instructions = st.text_area("Instructions", height=160, key="new_task_instructions",
                                     placeholder="Write a short essay (about 200 words)...")
-        due = st.date_input("Due date (optional)", value=None, min_value=datetime.date.today(),
-                            key="new_task_due")
+        with st.container(horizontal=True):
+            due = st.date_input("Due date (optional)", value=None, min_value=datetime.date.today(),
+                                key="new_task_due")
+            points = st.number_input("Points (optional)", min_value=1, max_value=assignments.MAX_POINTS,
+                                     value=None, step=1, key="new_task_points",
+                                     help="Leave empty for work that is not graded.")
         cancel, create = _buttons("new_task_cancel", "Create assignment", "new_task_create")
     if cancel:
         common.finish_dialog()
     if create:
         try:
-            assignments.create_assignment(class_id, title, instructions, due or "", teacher)
+            assignments.create_assignment(class_id, title, instructions, due or "", teacher,
+                                          points="" if points is None else points)
         except ValueError as exc:
             st.error(common.md(str(exc)), icon=":material/error:")
         else:
             common.finish_dialog("Assignment created. Students in the class can see it now.",
                                  ":material/assignment:")
+
+
+@st.dialog("Edit assignment", icon=":material/edit:", width="medium", on_dismiss=common.close_dialog)
+def edit_assignment(assignment_id, teacher):
+    task = assignments.get_assignment(assignment_id)
+    with st.form("edit_assignment", border=False):
+        title = st.text_input("Title", value=task["title"], key="edit_task_title")
+        instructions = st.text_area("Instructions", value=task["instructions"], height=160,
+                                    key="edit_task_instructions")
+        with st.container(horizontal=True):
+            due = st.date_input("Due date (optional)", value=store.parse_date(task["due_at"]),
+                                key="edit_task_due")
+            points = st.number_input("Points (optional)", min_value=1, max_value=assignments.MAX_POINTS,
+                                     value=assignments.max_points(task), step=1, key="edit_task_points")
+        cancel, save = _buttons("edit_task_cancel", "Save", "edit_task_save")
+    if cancel:
+        common.finish_dialog()
+    if save:
+        try:
+            assignments.update_assignment(assignment_id, by=teacher, title=title, instructions=instructions,
+                                          due_at=due or "", points="" if points is None else points)
+        except ValueError as exc:
+            st.error(common.md(str(exc)), icon=":material/error:")
+        else:
+            common.finish_dialog("Assignment saved. Students see the change right away.",
+                                 ":material/edit:")
+
+
+@st.dialog("Rename class", icon=":material/edit:", on_dismiss=common.close_dialog)
+def rename_class(class_id, teacher):
+    record = classes.get_class(class_id)
+    with st.form("rename_class", border=False):
+        name = st.text_input("Class name", value=record["name"], key="rename_class_name")
+        term = st.text_input("Term (optional)", value=record["term"], key="rename_class_term")
+        cancel, save = _buttons("rename_cancel", "Save", "rename_save")
+    if cancel:
+        common.finish_dialog()
+    if save:
+        try:
+            classes.rename_class(class_id, name, term, by=teacher)
+        except ValueError as exc:
+            st.error(common.md(str(exc)), icon=":material/error:")
+        else:
+            common.finish_dialog("Class renamed.", ":material/edit:")
+
+
+@st.dialog("Return every decided submission?", icon=":material/assignment_return:",
+           on_dismiss=common.close_dialog)
+def return_all(review_ids, teacher):
+    names = [common.display_name(reviews.get_review(r)["username"]) for r in review_ids]
+    st.write("These students will see your decision and your note: {}.".format(
+        ", ".join("**{}**".format(common.md(n)) for n in names)))
+    with st.form("return_all", border=False):
+        cancel, confirm = _buttons("return_all_cancel", "Return {}".format(len(review_ids)),
+                                   "return_all_confirm")
+    if cancel:
+        common.finish_dialog()
+    if confirm:
+        done, failed = 0, []
+        for review_id in review_ids:
+            try:
+                reviews.return_to_student(review_id, by=teacher)
+                done += 1
+            except ValueError as exc:
+                failed.append(str(exc))
+        if failed:
+            common.flash("Returned {}; not returned: {}".format(done, "; ".join(failed)), ":material/error:")
+        common.finish_dialog("Returned {} submission{}.".format(done, "" if done == 1 else "s"),
+                             ":material/assignment_return:")
 
 
 @st.dialog("New join code?", icon=":material/key:", on_dismiss=common.close_dialog)
@@ -110,6 +184,38 @@ def remove_student(class_id, username, teacher):
         else:
             common.finish_dialog("{} was removed from the class.".format(common.display_name(username)),
                                  ":material/person_remove:")
+
+
+def _forget_reset():
+    st.session_state.pop("reset_result", None)
+    common.close_dialog()
+
+
+@st.dialog("Reset the password?", icon=":material/lock_reset:", on_dismiss=_forget_reset)
+def reset_password(class_id, username, teacher):
+    name = common.md(common.display_name(username))
+    done = st.session_state.get("reset_result")
+    if done and done["username"] == username:
+        st.write("Give **{}** this temporary password. At the next sign-in they are asked to choose "
+                 "their own. It is not shown again.".format(name))
+        st.code(done["password"], language=None)
+        if st.button("Done", type="primary", key="reset_done"):
+            _forget_reset()
+            st.rerun()
+        return
+    st.write("**{}** gets a temporary password; the current one stops working.".format(name))
+    with st.form("reset_password", border=False):
+        cancel, confirm = _buttons("reset_cancel", "Reset password", "reset_confirm")
+    if cancel:
+        common.finish_dialog()
+    if confirm:
+        try:
+            temporary = classes.reset_student_password(class_id, username, by=teacher)
+        except ValueError as exc:
+            st.error(common.md(str(exc)), icon=":material/error:")
+        else:
+            st.session_state["reset_result"] = {"username": username, "password": temporary}
+            st.rerun()
 
 
 @st.dialog("Return to the student?", icon=":material/assignment_return:",

@@ -1,14 +1,21 @@
-# MarkText dependencies (all installed via pip). Python 3.11+.
+# MarkText dependencies, pinned to the versions it is tested with. Python 3.11+.
 #
-#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
 #   pip install -r requirements.txt
 #
 # First run downloads Qwen2.5-0.5B-Instruct (about 1 GB) into the Hugging
 # Face cache (default: ~/.cache/huggingface/hub).
+#
+# Why pinned: scorer.py reads the green lists and the seed of transformers'
+# WatermarkLogitsProcessor. A different transformers version may compute
+# them differently, and every earlier score would then disagree with a new
+# one. tests/test_golden.py fails when that happens; upgrade on purpose,
+# run it, and re-score if the numbers moved.
 
-torch>=2.4
-transformers>=5.0
-streamlit>=1.50
-pandas>=2.2
+torch==2.14.0
+transformers==5.17.0
+streamlit==1.64.0
+pandas==3.0.6
+altair==6.3.0
 
-# tests:  pip install pytest   then   pytest -q
+# tests:  pip install pytest==9.1.1   then   pytest -q

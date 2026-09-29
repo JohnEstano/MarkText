@@ -35,6 +35,8 @@ for sub in mine:
         "Words": int(sub["words"]),
         "Latest": sub["status"] == "current",
         "Teacher's decision": common.decision_text(shown["decision"]) if shown else "",
+        "Points": "{:g} / {}".format(float(shown["points"]), tasks[sub["assignment_id"]]["points"])
+                  if shown and shown.get("points") and tasks.get(sub["assignment_id"], {}).get("points") else "",
     })
 table = pd.DataFrame(rows)
 

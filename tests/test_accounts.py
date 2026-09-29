@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from classroom import accounts, cli, paths
+from classroom import accounts, audit, classes, cli, paths
 
 
 def test_hash_format_and_verify():
@@ -19,7 +19,7 @@ def test_hash_format_and_verify():
 def test_register_normalises_and_never_stores_the_password(data_dir):
     user = accounts.register("  Alice ", "s3cret-pass", "student", "Alice  Santos")
     assert user == {"username": "alice", "display_name": "Alice Santos", "role": "student",
-                    "created_at": user["created_at"], "last_login": ""}
+                    "created_at": user["created_at"], "last_login": "", "must_change": False}
     raw = paths.users_path().read_text(encoding="utf-8")
     assert "s3cret-pass" not in raw
     assert json.loads(raw)["users"]["alice"]["password"].startswith("pbkdf2_sha256$1000$")
@@ -160,3 +160,29 @@ def test_the_setup_screen_cannot_make_a_second_teacher(data_dir):
     accounts.register("reyes", "teacherpass", "teacher", first_teacher=True)
     with pytest.raises(ValueError, match="already exists"):
         accounts.register("other", "teacherpass", "teacher", first_teacher=True)
+
+
+def test_a_teacher_resets_a_students_password(course, people):
+    cid = course["class"]["class_id"]
+    with pytest.raises(ValueError, match="class's teacher"):
+        classes.reset_student_password(cid, "alice", by="ben")
+    with pytest.raises(ValueError, match="not an active student"):
+        classes.reset_student_password(cid, "ben", by="prof")
+    temporary = classes.reset_student_password(cid, "alice", by="prof")
+    assert accounts.authenticate("alice", "studentpass") is None
+    user = accounts.authenticate("alice", temporary)
+    assert user["must_change"] is True
+    accounts.change_password("alice", temporary, "my-own-pass-7")
+    assert accounts.authenticate("alice", "my-own-pass-7")["must_change"] is False
+    assert audit.read(action="password_reset")[0]["actor"] == "prof"
+
+
+def test_the_command_line_rotates_the_key(data_dir, tmp_path, monkeypatch, capsys):
+    import config as cfg
+    monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "wm.json")
+    old = cfg.load_config()["watermark"]["key_id"]
+    assert cli.main(["rotate-key"]) == 0
+    assert old in capsys.readouterr().out
+    assert cfg.load_config()["watermark"]["retired_keys"][0]["key_id"] == old
+    assert audit.read(action="key_rotated")[0]["details"] == "replaced key {}".format(old)
+

@@ -9,9 +9,10 @@ import datetime
 from classroom import accounts, audit, classes, paths, store
 
 COLUMNS = ["assignment_id", "class_id", "title", "instructions", "due_at",
-           "created_by", "created_at", "status"]
+           "created_by", "created_at", "status", "points"]
 STATUSES = ("open", "closed")
-EDITABLE = ("title", "instructions", "due_at", "status")
+EDITABLE = ("title", "instructions", "due_at", "status", "points")
+MAX_POINTS = 1000
 MAX_TITLE = 120
 MAX_INSTRUCTIONS = 5000
 
@@ -51,16 +52,37 @@ def _check_fields(fields):
         if fields["status"] not in STATUSES:
             raise ValueError("Status must be open or closed.")
         out["status"] = fields["status"]
+    if "points" in fields:
+        out["points"] = _check_points(fields["points"])
     return out
 
 
-def create_assignment(class_id, title, instructions="", due_at="", created_by=""):
+def _check_points(points):
+    """'' (not graded) or a whole number of points from 1 to MAX_POINTS."""
+    if points in (None, ""):
+        return ""
+    try:
+        value = float(points)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Points are a whole number, or empty for no points.") from exc
+    if value != int(value) or not 1 <= value <= MAX_POINTS:
+        raise ValueError("Points are a whole number from 1 to {}.".format(MAX_POINTS))
+    return str(int(value))
+
+
+def max_points(assignment):
+    """The assignment's points as a number, or None when it is not graded."""
+    return int(assignment["points"]) if assignment.get("points") else None
+
+
+def create_assignment(class_id, title, instructions="", due_at="", created_by="", points=""):
     record = classes.get_class(class_id)
     if record is None:
         raise ValueError("There is no class {}.".format(class_id))
     if accounts.normalise_username(created_by) != record["teacher"]:
         raise ValueError("Only the class's teacher can add assignments.")
-    fields = _check_fields({"title": title, "instructions": instructions, "due_at": due_at})
+    fields = _check_fields({"title": title, "instructions": instructions, "due_at": due_at,
+                            "points": points})
     row = {"assignment_id": store.new_id("asg"), "class_id": class_id,
            "created_by": record["teacher"], "created_at": store.now(), "status": "open", **fields}
     store.append_row(paths.assignments_path(), COLUMNS, row)
@@ -107,6 +129,13 @@ def close_assignment(assignment_id, by=None):
 
 def reopen_assignment(assignment_id, by=None):
     return update_assignment(assignment_id, by=by, status="open")
+
+
+def is_late(assignment, submitted_at):
+    """True when a hand-in came after the due date (the whole due day counts)."""
+    due = store.parse_date(assignment.get("due_at"))
+    handed = store.parse_date(submitted_at)
+    return due is not None and handed is not None and handed > due
 
 
 def is_overdue(assignment, today=None):

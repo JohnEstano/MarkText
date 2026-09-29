@@ -23,15 +23,18 @@ ESSAY = "People keep diaries to remember the small things. " * 25
 def new_app(data_dir, tmp_path, monkeypatch):
     monkeypatch.setattr(cfg, "CONFIG_PATH", tmp_path / "wm.json")
     monkeypatch.setattr(common, "make_engine", lambda config: FakeEngine(config))
+    monkeypatch.setattr(common, "make_scorer", lambda config: FakeEngine(config))
     monkeypatch.setattr(lab, "GENERATED_DIR", tmp_path / "generated")
     monkeypatch.setattr(lab, "EXPORT_DIR", tmp_path / "logs" / "exports")
     common.get_engine.clear()
+    common.get_scorer.clear()
     common.MODEL.update(loaded=False)
 
     def make():
         return AppTest.from_file(str(ROOT / "app.py"), default_timeout=60).run()
     yield make
     common.get_engine.clear()
+    common.get_scorer.clear()
 
 
 def ok(at):
@@ -476,3 +479,123 @@ def test_the_records_page_checks_files_and_restores_a_backup(new_app, school):
     ok(at.button(key="restore_confirm").click().run())
     assert classes.get_class(cid)["name"] == "Intro to writing"
     assert any("Restored data/classes.json" in t.value for t in at.toast)
+
+
+def test_scoring_does_not_load_the_model(new_app, school):
+    submissions.submit(school["assignment"]["assignment_id"], "alice", ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    assert len(reviews.list_reviews()) == 1
+    assert not common.MODEL["loaded"]                           # the scorer needs no weights
+
+
+# ------------------------------------------------------------ group 5: teacher tools
+def _decided(school, who, decision="accepted", points=None):
+    sub = submissions.submit(school["assignment"]["assignment_id"], who, ESSAY)
+    rid = detection.detect_submission(FakeEngine(), threading.Lock(), sub, "prof")["review_id"]
+    reviews.decide(rid, decision, "Thanks, " + who, "prof", points=points)
+    return rid
+
+
+def test_editing_an_assignment_and_renaming_a_class(new_app, school):
+    cid, aid = school["class"]["class_id"], school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_classes")
+    ok(at.button(key="open_" + cid).click().run())
+    ok(at.button(key="edit_" + aid).click().run())
+    at.text_input(key="edit_task_title").input("Why we keep diaries")
+    at.number_input(key="edit_task_points").set_value(10)
+    ok(at.button(key="edit_task_save").click().run())
+    task = assignments.get_assignment(aid)
+    assert (task["title"], task["points"]) == ("Why we keep diaries", "10")
+    ok(at.button(key="class_rename").click().run())
+    at.text_input(key="rename_class_name").input("Writing 101")
+    ok(at.button(key="rename_save").click().run())
+    assert classes.get_class(cid)["name"] == "Writing 101"
+
+
+def test_return_all_and_points_reach_the_student(new_app, school, people):
+    classes.join_class(school["class"]["join_code"], "ben")
+    assignments.update_assignment(school["assignment"]["assignment_id"], by="prof", points=10)
+    rids = [_decided(school, "alice", points=8.5), _decided(school, "ben", "needs_review", points=6)]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    assert at.button(key="return_all").label == "Return all decided (2)"
+    ok(at.button(key="return_all").click().run())
+    ok(at.button(key="return_all_confirm").click().run())
+    assert all(reviews.get_review(r)["returned"] == "1" for r in rids)
+    student = sign_in(new_app(), "alice", "studentpass")
+    ok(student.switch_page("app_pages/student_assignment.py").run())
+    assert "8.5 / 10 points" in " ".join(m.value for m in student.markdown)
+
+
+def test_points_are_entered_with_the_decision(new_app, school):
+    assignments.update_assignment(school["assignment"]["assignment_id"], by="prof", points=20)
+    sub = submissions.submit(school["assignment"]["assignment_id"], "alice", ESSAY)
+    rid = detection.detect_submission(FakeEngine(), threading.Lock(), sub, "prof")["review_id"]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    at.segmented_control(key="decision_" + rid).set_value("accepted")
+    at.number_input(key="points_" + rid).set_value(17.5)
+    ok(at.button(key="save_" + rid).click().run())
+    assert reviews.get_review(rid)["points"] == "17.5"
+
+
+def test_a_teacher_resets_a_password_and_the_student_must_change_it(new_app, school):
+    cid = school["class"]["class_id"]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_classes")
+    ok(at.button(key="open_" + cid).click().run())
+    ok(at.selectbox(key="remove_pick_" + cid).select("alice").run())
+    ok(at.button(key="reset_" + cid).click().run())
+    ok(at.button(key="reset_confirm").click().run())
+    temporary = at.code[-1].value
+    assert accounts.authenticate("alice", temporary)
+    ok(at.button(key="reset_done").click().run())
+    student = sign_in(new_app(), "alice", temporary)
+    assert any("temporary password" in w.value for w in student.warning)
+
+
+def test_the_teacher_sees_what_changed_in_an_assistant_draft(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.button(key="assistant_go").click().run())
+    ok(at.button(key="draft_use").click().run())
+    draft = at.text_area(key="editor_" + aid).value
+    at.text_area(key="editor_" + aid).input("My own opening sentence. " + draft)
+    ok(at.button(key="hand_in").click().run())
+    side = submissions.sidecar(submissions.current_submission(aid, "alice"))
+    assert side["generation"]["text"] == draft
+    teacher = sign_in(new_app(), "prof", "teacherpass")
+    follow(teacher, "teacher_review")
+    assert any("of the assistant's draft is still in this version" in c.value for c in teacher.caption)
+    assert ":green-background[My own opening sentence.]" in " ".join(m.value for m in teacher.markdown)
+
+
+def test_one_students_work_across_the_class(new_app, school):
+    cid = school["class"]["class_id"]
+    _decided(school, "alice")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_classes")
+    ok(at.button(key="open_" + cid).click().run())
+    ok(at.selectbox(key="history_pick_" + cid).select("alice").run())
+    table = next(d.value for d in at.dataframe if {"Assignment", "Version"} <= set(d.value.columns))
+    assert list(table["Assignment"]) == ["Why people keep diaries"] and list(table["Decision"]) == ["Accepted"]
+
+
+def test_after_a_key_rotation_a_draft_is_scored_with_its_own_key(new_app, school, tmp_path):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.button(key="assistant_go").click().run())
+    ok(at.button(key="draft_use").click().run())
+    ok(at.button(key="hand_in").click().run())
+    old, new = cfg.rotate_key(tmp_path / "wm.json")
+    teacher = sign_in(new_app(), "prof", "teacherpass")
+    follow(teacher, "teacher_review")
+    ok(teacher.button(key="score_all").click().run())
+    review = reviews.latest_review(submissions.current_submission(aid, "alice")["submission_id"])
+    assert review["key_id"] == old and review["label"] == "LIKELY MARKTEXT"
+    assert any("the key this draft was made with" in c.value for c in teacher.caption)

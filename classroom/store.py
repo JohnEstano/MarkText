@@ -40,6 +40,8 @@ from classroom import paths
 
 _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
+# path -> (file signature, columns or None, parsed content); see _cached
+_CACHE = {}
 
 
 class _Lock:
@@ -237,6 +239,27 @@ def _replace(path, write):
                 tmp.unlink()
 
 
+def _signature(path):
+    """What changes whenever the file does: os.replace makes a new file (new
+    id), an append changes the size, any write changes the time."""
+    st = path.stat()
+    return st.st_ino, st.st_mtime_ns, st.st_size
+
+
+def _cached(path, extra, load):
+    """load(), or the result of the last load() while the file is unchanged.
+    Pages read the same files many times per click (the home page reads the
+    rosters once per assignment); parsing each unchanged file once is enough.
+    Callers get a copy, so changing what they got cannot change the cache."""
+    key = str(path.resolve()).lower()
+    signature = _signature(path)
+    hit = _CACHE.get(key)
+    if hit is None or hit[0] != signature or hit[1] != extra:
+        hit = (signature, extra, load())
+        _CACHE[key] = hit
+    return copy.deepcopy(hit[2])
+
+
 # ---------------------------------------------------------------------- JSON
 def read_json(path, default):
     """The file's object, or a copy of `default` when the file does not exist
@@ -246,10 +269,12 @@ def read_json(path, default):
     with lock_for(path).reading():
         if not path.exists() or path.stat().st_size == 0:
             return copy.deepcopy(default)
-        try:
+        def load():
             with file_errors(path, "read"):
                 with open(path, "r", encoding="utf-8-sig") as f:
-                    data = json.load(f)
+                    return json.load(f)
+        try:
+            data = _cached(path, None, load)
         except json.JSONDecodeError as exc:
             raise ValueError("{} is not valid JSON ({}). Restore it from a copy in "
                              "data/backups.".format(shown_path(path), exc)) from exc
@@ -356,9 +381,12 @@ def read_rows(path, columns):
     path = pathlib.Path(path)
     with lock_for(path).reading():
         ensure_csv(path, columns)
-        with file_errors(path, "read"):
-            with open(path, "r", newline="", encoding="utf-8-sig") as f:
-                return [dict(row) for row in csv.DictReader(f)]
+
+        def load():
+            with file_errors(path, "read"):
+                with open(path, "r", newline="", encoding="utf-8-sig") as f:
+                    return [dict(row) for row in csv.DictReader(f)]
+        return _cached(path, tuple(columns), load)
 
 
 def append_row(path, columns, row):

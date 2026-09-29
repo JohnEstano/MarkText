@@ -1,3 +1,4 @@
+import copy
 import json
 import threading
 
@@ -118,3 +119,19 @@ def test_a_missing_text_is_skipped_and_the_rest_are_scored(course, people):
     assert "missing" in run["skipped"][0][1] and run["stopped"] is None
     assert [r["username"] for r in run["written"]] == ["ben"]
     assert seen == [("alice", True), ("ben", False)]
+
+
+def test_a_draft_is_scored_with_the_key_it_was_made_with(course):
+    old = FakeEngine()                                             # key id 0a1b2c3d
+    info = assistant.draft(old, threading.Lock(), "Write about diaries", 150)
+    sub = submissions.submit(course["assignment"]["assignment_id"], "alice", info["text"], "assistant",
+                             generation=assistant.generation_record(info, "Write about diaries"))
+    assert detection.drafted_with(sub) == "0a1b2c3d"
+    new_config = copy.deepcopy(old.config)
+    new_config["watermark"].update(hashing_key=777, key_id="ffff0000")
+    new = FakeEngine(new_config)
+    engines = {"0a1b2c3d": old, "ffff0000": new}
+    run = detection.detect_many(new, threading.Lock(), [sub], "prof",
+                                pick=lambda s: (engines[detection.drafted_with(s) or "ffff0000"],
+                                                threading.Lock()))
+    assert run["written"][0]["key_id"] == "0a1b2c3d"

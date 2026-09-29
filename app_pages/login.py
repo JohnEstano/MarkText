@@ -18,7 +18,14 @@ state = st.session_state
 
 def _enter(user, message, weak=False):
     common.sign_in(user)
-    state["weak_password"] = weak
+    if user.get("must_change"):
+        state["weak_password"] = ("Your teacher set a temporary password for you. Choose your own on "
+                                  "the Account page.")
+    elif weak:
+        state["weak_password"] = ("Your password is easy to guess, or it was published as a demo "
+                                  "password. Change it on the Account page.")
+    else:
+        state["weak_password"] = False
     common.flash(message, ":material/waving_hand:")
     st.rerun()
 

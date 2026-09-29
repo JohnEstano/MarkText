@@ -193,3 +193,28 @@ def test_the_example_file_is_current():
     assert example["config_version"] == cfg.CONFIG_VERSION
     assert set(example) == set(cfg.DEFAULT_CONFIG)
     assert set(example["watermark"]) == set(cfg.DEFAULT_CONFIG["watermark"])
+
+
+def test_rotating_the_key_keeps_the_old_one(tmp_path):
+    path = tmp_path / "wm.json"
+    first = cfg.load_config(path)
+    old, new = cfg.rotate_key(path)
+    now = cfg.load_config(path)
+    assert old == first["watermark"]["key_id"] and new == now["watermark"]["key_id"] != old
+    assert now["watermark"]["retired_keys"] == [{"hashing_key": first["watermark"]["hashing_key"],
+                                                 "key_id": old}]
+    assert cfg.config_for_key(now, old)["watermark"]["hashing_key"] == first["watermark"]["hashing_key"]
+    assert cfg.config_for_key(now, new) is now and cfg.config_for_key(now, "ffffffff") is None
+    shown = json.dumps(cfg.redacted(now))
+    assert str(first["watermark"]["hashing_key"]) not in shown and old in shown
+
+
+def test_retired_keys_are_validated():
+    c = good()
+    c["watermark"]["key_id"] = "0a1b2c3d"
+    c["watermark"]["retired_keys"] = [{"hashing_key": 99, "key_id": "0a1b2c3d"}]
+    with pytest.raises(ValueError, match="different"):
+        cfg.validate_config(c)
+    c["watermark"]["retired_keys"] = [{"hashing_key": "99", "key_id": "11111111"}]
+    with pytest.raises(ValueError, match="retired_keys"):
+        cfg.validate_config(c)

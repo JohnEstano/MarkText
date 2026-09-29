@@ -16,12 +16,12 @@ from classroom import accounts, assignments, audit, classes, paths, reviews, sto
 STATES = ("not submitted", "awaiting detection", "awaiting decision", "decided", "returned")
 REPORT_COLUMNS = ["username", "display_name", "state", "version", "submitted_at", "source",
                   "words", "tokens_scored", "green_pct", "z_score", "label", "decision", "note",
-                  "returned", "returned_at", "earlier_flag"]
+                  "returned", "returned_at", "earlier_flag", "late", "points"]
 FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at"]
 SUMMARY_COLUMNS = ["assignment_id", "title", "due_at", "status", "students", "submitted",
                    "detected", "likely", "possible", "not_detected", "inconclusive", "accepted",
-                   "flagged", "needs_review", "returned", "mean_z"]
-NUMERIC = ("version", "words", "tokens_scored", "green_pct", "z_score")
+                   "flagged", "needs_review", "returned", "late", "mean_z", "points", "mean_points"]
+NUMERIC = ("version", "words", "tokens_scored", "green_pct", "z_score", "points")
 
 
 def _state(row):
@@ -55,7 +55,7 @@ def assignment_frame(assignment_id):
                         columns=reviews.COLUMNS)[
         ["submission_id", "review_id", "tokens_scored", "green_pct", "z_score", "label",
          "decision", "note", "returned", "returned_at", "detected_at", "returned_decision",
-         "returned_note"]]
+         "returned_note", "points", "returned_points"]]
 
     # a resubmission becomes the current version, but a flag on an earlier
     # version must not disappear with it
@@ -70,6 +70,7 @@ def assignment_frame(assignment_id):
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["returned"] = df["state"] == "returned"
     df["earlier_flag"] = df["username"].isin(flagged_before)
+    df["late"] = df["submitted_at"].map(lambda t: bool(t) and assignments.is_late(task, t))
     return df[FRAME_COLUMNS].sort_values("display_name", key=lambda s: s.str.lower()).reset_index(drop=True)
 
 
@@ -97,7 +98,10 @@ def _summary_row(task):
         "flagged": int((f["decision"] == "flagged").sum()),
         "needs_review": int((f["decision"] == "needs_review").sum()),
         "returned": int(f["returned"].sum()),
+        "late": int(f["late"].sum()),
         "mean_z": round(float(detected["z_score"].mean()), 2) if len(detected) else None,
+        "points": task.get("points", ""),
+        "mean_points": round(float(f["points"].mean()), 2) if f["points"].notna().any() else None,
     }
 
 
@@ -211,6 +215,8 @@ def student_overview(username):
             "submitted_at": sub["submitted_at"] if sub else "",
             "decision": shown["decision"] if shown else "",
             "note": shown["note"] if shown else "",
+            "points": shown["points"] if shown else "",
+            "max_points": task.get("points", ""),
             "returned_at": shown["returned_at"] if shown else "",
         })
     return rows

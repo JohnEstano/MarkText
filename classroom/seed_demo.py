@@ -21,7 +21,6 @@ this file: a password in public source code is everyone's password.
 import argparse
 import datetime
 import pathlib
-import secrets
 import threading
 
 from classroom import accounts, assignments, assistant, classes, detection, paths, store, submissions
@@ -54,8 +53,7 @@ def archive_data():
 
 def new_password():
     """A random demo password: three groups of four, easy to read aloud."""
-    alphabet = classes.CODE_ALPHABET.lower()
-    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
+    return accounts.temporary_password()
 
 
 def _account(username, display_name, role, password):

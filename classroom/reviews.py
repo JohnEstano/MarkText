@@ -16,18 +16,19 @@ Classroom treats a changed grade). Rows written before these two columns
 existed have them empty and show the decision itself.
 """
 
-from classroom import audit, classes, paths, store
+from classroom import assignments, audit, classes, paths, store
 
 COLUMNS = ["review_id", "submission_id", "assignment_id", "class_id", "username", "version",
            "run_id", "model_id", "key_id", "device", "tokens_scored", "green_pct", "z_score",
            "p_value", "label", "detected_at", "detected_by", "decision", "note", "returned",
            "returned_at", "decided_by", "decided_at", "returned_decision", "returned_note",
-           "repeated", "passage_z", "passage_p", "passage_start", "passage_end"]
+           "repeated", "passage_z", "passage_p", "passage_start", "passage_end", "points",
+           "returned_points"]
 DECISIONS = ("pending", "accepted", "flagged", "needs_review")
 DECISION_LABELS = {"pending": "Pending", "accepted": "Accepted", "flagged": "Flagged",
                    "needs_review": "Needs review"}
 EDITABLE = ("decision", "note", "returned", "returned_at", "decided_by", "decided_at",
-            "returned_decision", "returned_note")
+            "returned_decision", "returned_note", "points", "returned_points")
 CARRIED_OVER = EDITABLE
 MAX_NOTE = 1000
 
@@ -66,6 +67,7 @@ def record_detection(submission, stats, run_id, model_id, key_id, detected_by):
         "passage_p": "{:.3e}".format(passage["p"]) if passage else "",
         "passage_start": passage.get("start", "") if passage else "",
         "passage_end": passage.get("end", "") if passage else "",
+        "points": "", "returned_points": "",
     }
     if previous:
         row.update({k: previous.get(k, "") for k in CARRIED_OVER})
@@ -128,14 +130,36 @@ def update_review(review_id, by=None, **fields):
                             lambda r: dict(r, **{k: str(v) for k, v in fields.items()}))
 
 
-def decide(review_id, decision, note="", decided_by=""):
+def _check_points(review_id, points):
+    """'' or a number from 0 to the assignment's points (halves allowed)."""
+    if points in (None, ""):
+        return ""
+    review = get_review(review_id)
+    task = assignments.get_assignment(review["assignment_id"]) if review else None
+    top = assignments.max_points(task) if task else None
+    if top is None:
+        raise ValueError("This assignment has no points; set them on the Classes page first.")
+    try:
+        value = float(points)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Points are a number.") from exc
+    if not 0 <= value <= top or value * 2 != int(value * 2):
+        raise ValueError("Points are from 0 to {}, in steps of 0.5.".format(top))
+    return "{:g}".format(value)
+
+
+def decide(review_id, decision, note="", decided_by="", points=None):
+    """Record the teacher's decision, note and (for a graded assignment)
+    points. points=None leaves the points as they are."""
     if decision not in DECISIONS or decision == "pending":
         raise ValueError("Choose accepted, flagged or needs review.")
     note = (note or "").strip()
     if len(note) > MAX_NOTE:
         raise ValueError("Notes are limited to {} characters.".format(MAX_NOTE))
-    saved = update_review(review_id, by=decided_by or None, decision=decision, note=note,
-                          decided_by=decided_by, decided_at=store.now())
+    fields = {"decision": decision, "note": note, "decided_by": decided_by, "decided_at": store.now()}
+    if points is not None:
+        fields["points"] = _check_points(review_id, points)
+    saved = update_review(review_id, by=decided_by or None, **fields)
     audit.record(decided_by, "decided", review_id, decision)
     return saved
 
@@ -148,7 +172,8 @@ def return_to_student(review_id, by=None):
     if review["decision"] == "pending":
         raise ValueError("Record a decision before returning the work.")
     saved = update_review(review_id, by=by, returned="1", returned_at=store.now(),
-                          returned_decision=review["decision"], returned_note=review["note"])
+                          returned_decision=review["decision"], returned_note=review["note"],
+                          returned_points=review.get("points", ""))
     audit.record(by, "returned", review_id, review["decision"])
     return saved
 
@@ -164,9 +189,10 @@ def shown_to_student(review):
         return None
     if review.get("returned_decision"):
         return {"decision": review["returned_decision"], "note": review.get("returned_note", ""),
-                "returned_at": review["returned_at"]}
+                "points": review.get("returned_points", ""), "returned_at": review["returned_at"]}
     # a row returned before the snapshot columns existed
-    return {"decision": review["decision"], "note": review["note"], "returned_at": review["returned_at"]}
+    return {"decision": review["decision"], "note": review["note"], "points": review.get("points", ""),
+            "returned_at": review["returned_at"]}
 
 
 def changed_since_return(review):
@@ -174,5 +200,6 @@ def changed_since_return(review):
     the work, so the student still sees the older version."""
     if not is_returned(review) or not review.get("returned_decision"):
         return False
-    return (review["decision"], review["note"]) != (review["returned_decision"],
-                                                    review.get("returned_note", ""))
+    return ((review["decision"], review["note"], review.get("points", ""))
+            != (review["returned_decision"], review.get("returned_note", ""),
+                review.get("returned_points", "")))

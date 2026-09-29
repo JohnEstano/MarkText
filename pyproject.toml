@@ -9,11 +9,14 @@ description = "Statistical watermarking and detection of LLM-generated text with
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11"
+# ranges here; requirements.txt pins the exact versions the tests pass with
+# (scorer.py reads transformers' green lists: tests/test_golden.py checks them)
 dependencies = [
     "torch>=2.4",
-    "transformers>=5.0",
-    "streamlit>=1.50",
+    "transformers>=5.17,<6",
+    "streamlit>=1.64,<2",
     "pandas>=2.2",
+    "altair>=5",
 ]
 
 [project.optional-dependencies]
