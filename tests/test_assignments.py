@@ -49,3 +49,10 @@ def test_overdue():
     assert assignments.is_overdue(a, datetime.date(2026, 10, 16))
     assert not assignments.is_overdue(a, datetime.date(2026, 10, 15))
     assert not assignments.is_overdue({"due_at": ""})
+
+
+def test_overdue_reads_dates_saved_by_excel_and_ignores_garbage():
+    today = datetime.date(2026, 10, 20)
+    assert assignments.is_overdue({"due_at": "10/15/2026"}, today)
+    assert not assignments.is_overdue({"due_at": "next week"}, today)
+    assert not assignments.is_overdue({"due_at": ""}, today)

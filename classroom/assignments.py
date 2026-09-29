@@ -25,12 +25,10 @@ def _check_due(due_at):
     due_at = (due_at or "").strip() if isinstance(due_at, str) else due_at
     if not due_at:
         return ""
-    if isinstance(due_at, datetime.date):
-        return due_at.isoformat()
-    try:
-        return datetime.date.fromisoformat(due_at).isoformat()
-    except ValueError as exc:
-        raise ValueError("Due dates look like 2026-10-15.") from exc
+    due = store.parse_date(due_at)
+    if due is None:
+        raise ValueError("Due dates look like 2026-10-15.")
+    return due.isoformat()
 
 
 def _check_fields(fields):
@@ -108,10 +106,10 @@ def reopen_assignment(assignment_id, by=None):
 
 
 def is_overdue(assignment, today=None):
-    if not assignment.get("due_at"):
-        return False
-    today = today or datetime.date.today()
-    return datetime.date.fromisoformat(assignment["due_at"]) < today
+    """True when the due date has passed. A due date that cannot be read
+    (retyped in a spreadsheet) counts as no due date rather than a crash."""
+    due = store.parse_date(assignment.get("due_at"))
+    return due is not None and due < (today or datetime.date.today())
 
 
 def open_for_student(username):

@@ -47,6 +47,7 @@ with right:
                 except ValueError as exc:
                     st.error(str(exc), icon=":material/error:")
                 else:
+                    state["weak_password"] = False
                     common.flash("Password changed.", ":material/lock_reset:")
                     st.rerun()
     if record["role"] == "teacher":

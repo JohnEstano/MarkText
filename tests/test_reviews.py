@@ -48,3 +48,39 @@ def test_scoring_again_keeps_the_decision(course):
     assert reviews.latest_review(sub["submission_id"])["review_id"] == again["review_id"]
     assert len(reviews.list_reviews(latest_only=False)) == 2
     assert len(reviews.list_reviews()) == 1
+
+
+def test_a_decision_changed_after_return_waits_for_the_next_return(course):
+    _, rev = _review(course)
+    rid = rev["review_id"]
+    reviews.decide(rid, "accepted", "Well argued.", "prof")
+    reviews.return_to_student(rid, by="prof")
+    shown = reviews.shown_to_student(reviews.get_review(rid))
+    assert (shown["decision"], shown["note"]) == ("accepted", "Well argued.")
+    # the teacher changes their mind: the student keeps seeing what was returned
+    reviews.decide(rid, "flagged", "Please come and see me.", "prof")
+    after = reviews.get_review(rid)
+    assert reviews.changed_since_return(after)
+    assert reviews.shown_to_student(after)["decision"] == "accepted"
+    reviews.return_to_student(rid, by="prof")
+    again = reviews.get_review(rid)
+    assert not reviews.changed_since_return(again)
+    assert reviews.shown_to_student(again) == {"decision": "flagged", "note": "Please come and see me.",
+                                               "returned_at": again["returned_at"]}
+
+
+def test_a_row_returned_before_the_snapshot_columns_shows_its_decision(course):
+    _, rev = _review(course)
+    reviews.decide(rev["review_id"], "accepted", "ok", "prof")
+    reviews.update_review(rev["review_id"], returned="1", returned_at="2026-09-29 10:00:00")
+    old = reviews.get_review(rev["review_id"])
+    assert old["returned_decision"] == ""
+    assert reviews.shown_to_student(old)["decision"] == "accepted"
+    assert not reviews.changed_since_return(old)
+
+
+def test_nothing_is_shown_before_a_return(course):
+    _, rev = _review(course)
+    reviews.decide(rev["review_id"], "flagged", "", "prof")
+    assert reviews.shown_to_student(reviews.get_review(rev["review_id"])) is None
+    assert reviews.shown_to_student(None) is None

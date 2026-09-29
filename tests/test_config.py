@@ -84,16 +84,29 @@ def test_public_default_key_is_kept_but_flagged(tmp_path):
     assert any("public default" in n for n in notes)
 
 
-def test_corrupt_file_is_backed_up_not_overwritten(tmp_path):
+def test_a_broken_file_stops_and_is_left_alone(tmp_path):
+    # a typo must never cost the key: a new file would carry a new key and
+    # every earlier watermarked text would stop being detected
     path = tmp_path / "wm.json"
-    path.write_text("{not json", encoding="utf-8")
-    notes = []
-    c = cfg.load_config(path, notes)
-    backups = list(tmp_path.glob("wm.bad-*.json"))
-    assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == "{not json"
-    assert c["watermark"]["hashing_key"] is not None
-    assert any("moved to" in n for n in notes)
+    path.write_text('{"watermark": {"hashing_key": 123457,}}', encoding="utf-8")
+    with pytest.raises(ValueError, match="not valid JSON"):
+        cfg.load_config(path)
+    assert path.read_text(encoding="utf-8") == '{"watermark": {"hashing_key": 123457,}}'
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_a_top_level_that_is_not_an_object_stops(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON object"):
+        cfg.load_config(path)
+
+
+def test_a_byte_order_mark_is_accepted(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text(json.dumps({"watermark": {"hashing_key": 123457, "key_id": "0a1b2c3d"}}),
+                    encoding="utf-8-sig")
+    assert cfg.load_config(path)["watermark"]["hashing_key"] == 123457
 
 
 def test_partial_file_gets_defaults(tmp_path):

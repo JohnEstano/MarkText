@@ -8,6 +8,11 @@ the count can be raised later without breaking existing accounts.
 Students register themselves from the sign-in page. Teachers are created by
 the first-run setup screen (only while no teacher exists) or from the
 command line (classroom/cli.py), never by self-registration.
+
+A new password must be at least MIN_PASSWORD characters, must not be one of
+the most common passwords (or the demo password printed in older versions
+of this code) and must not contain the username. Accounts made before the
+rule existed still sign in; the app then asks them to change it.
 """
 
 import hashlib
@@ -24,6 +29,17 @@ MIN_PASSWORD = 8
 MAX_DISPLAY_NAME = 60
 USERNAME_RULE = re.compile(r"[a-z0-9][a-z0-9_.-]{2,23}")
 EMPTY = {"version": 1, "users": {}}
+# refused as new passwords, flagged at sign-in: the most common passwords of
+# eight characters or more, and the demo password older versions printed
+COMMON_PASSWORDS = frozenset("""
+password password1 password12 password123 passw0rd p@ssw0rd p@ssword 12345678 123456789
+1234567890 0123456789 87654321 11111111 00000000 12341234 11223344 abc12345 abcd1234
+qwerty12 qwerty123 qwertyui qwertyuiop asdfghjk asdf1234 zxcvbnm1 1q2w3e4r 1qaz2wsx
+zaq12wsx iloveyou iloveyou1 letmein1 welcome1 welcome123 admin123 administrator
+sunshine princess football baseball superman starwars trustno1 whatever
+changeme computer internet monkey123 dragon12 master12 michael1 jennifer
+teacher1 teacher123 student1 student123 classroom school123 marktext marktext-demo
+""".split())
 
 
 # ------------------------------------------------------------------ hashing
@@ -57,9 +73,28 @@ def validate_username(username):
                          "dashes or underscores, starting with a letter or a digit.")
 
 
-def validate_password(password):
-    if len(password or "") < MIN_PASSWORD:
-        raise ValueError("Passwords need at least {} characters.".format(MIN_PASSWORD))
+def password_problem(password, username=""):
+    """Why a password is too weak, or None when it is acceptable."""
+    password = password or ""
+    if len(password) < MIN_PASSWORD:
+        return "Passwords need at least {} characters.".format(MIN_PASSWORD)
+    if password.lower() in COMMON_PASSWORDS:
+        return "That password is one of the most common passwords (or a published demo password)."
+    if username and normalise_username(username) in password.lower():
+        return "The password must not contain the username."
+    if len(set(password)) < 4:
+        return "Use at least four different characters."
+    return None
+
+
+def validate_password(password, username=""):
+    problem = password_problem(password, username)
+    if problem:
+        raise ValueError(problem)
+
+
+def is_weak(password, username=""):
+    return password_problem(password, username) is not None
 
 
 def public(username, record):
@@ -83,7 +118,7 @@ def register(username, password, role, display_name=""):
     validate_username(username)
     if role not in ROLES:
         raise ValueError("Role must be one of {}.".format(", ".join(ROLES)))
-    validate_password(password)
+    validate_password(password, username)
     display_name = " ".join((display_name or "").split()) or username
     if len(display_name) > MAX_DISPLAY_NAME:
         raise ValueError("Display names are at most {} characters.".format(MAX_DISPLAY_NAME))
@@ -102,7 +137,9 @@ def register(username, password, role, display_name=""):
 def authenticate(username, password):
     """The public record when the password matches, else None. A successful
     sign-in records last_login (an atomic write; no backup copy is kept for
-    this routine field)."""
+    this routine field). When users.json cannot be written just then (open
+    in another program), the person is still signed in: a timestamp is not
+    worth locking someone out for."""
     username = normalise_username(username)
     record = _users().get(username)
     if record is None or not verify_password(password or "", record.get("password", "")):
@@ -111,7 +148,10 @@ def authenticate(username, password):
     def touch(data):
         data["users"][username]["last_login"] = store.now()
         return public(username, data["users"][username])
-    return store.update_json(paths.users_path(), EMPTY, touch, keep_backup=False)
+    try:
+        return store.update_json(paths.users_path(), EMPTY, touch, keep_backup=False)
+    except store.FileProblem:
+        return public(username, record)
 
 
 def get_user(username):
@@ -151,7 +191,7 @@ def change_password(username, old_password, new_password):
 def reset_password(username, new_password):
     """Set a new password without the old one (the command line uses this)."""
     username = normalise_username(username)
-    validate_password(new_password)
+    validate_password(new_password, username)
     hashed = hash_password(new_password)
 
     def change(data):

@@ -1,10 +1,11 @@
 import json
 import threading
 
+import pytest
 from fakes import FakeEngine
 
 import history
-from classroom import assistant, classes, detection, reviews, submissions
+from classroom import assistant, classes, detection, paths, reviews, store, submissions
 
 
 def test_one_detection_writes_the_log_and_the_review(course):
@@ -53,12 +54,13 @@ def test_pending_and_detect_many_with_progress_and_cancel(course, people):
 
     cancel, seen = threading.Event(), []
 
-    def stop_after_first(done, total, review):
-        seen.append((done, total, review["username"]))
+    def stop_after_first(done, total, submission, review):
+        seen.append((done, total, submission["username"], review["username"]))
         cancel.set()
-    written = detection.detect_many(FakeEngine(), threading.Lock(), todo, "prof",
-                                    on_progress=stop_after_first, cancel_event=cancel)
-    assert len(written) == 1 and seen == [(1, 2, "alice")]
+    run = detection.detect_many(FakeEngine(), threading.Lock(), todo, "prof",
+                                on_progress=stop_after_first, cancel_event=cancel)
+    assert len(run["written"]) == 1 and seen == [(1, 2, "alice", "alice")]
+    assert run["skipped"] == [] and run["stopped"] is None
     assert [s["username"] for s in detection.pending(task["assignment_id"])] == ["ben"]
     # a student who leaves the class drops out of the queue
     classes.remove_student(course["class"]["class_id"], "ben")
@@ -72,3 +74,47 @@ def test_reviews_survive_clearing_the_lab_history(course):
     assert history.read_history() == []
     kept = reviews.latest_review(sub["submission_id"])
     assert kept["z_score"] == rev["z_score"] and kept["run_id"] == rev["run_id"]
+
+
+def _two_waiting(course, people):
+    task = course["assignment"]
+    classes.join_class(course["class"]["join_code"], "ben")
+    for who in ("alice", "ben"):
+        submissions.submit(task["assignment_id"], who, "an essay by a person " * 20)
+    return detection.pending(task["assignment_id"])
+
+
+def test_a_reviews_file_open_in_excel_stops_scoring_before_anything_is_written(
+        course, people, excel_lock):
+    todo = _two_waiting(course, people)
+    excel_lock(paths.reviews_path())
+    run = detection.detect_many(FakeEngine(), threading.Lock(), todo, "prof")
+    assert run["written"] == [] and "data/reviews.csv" in run["stopped"]
+    assert "Excel" in run["stopped"]
+    assert history.read_history() == [] and reviews.list_reviews(latest_only=False) == []
+    excel_lock.release(paths.reviews_path())
+    run = detection.detect_many(FakeEngine(), threading.Lock(), todo, "prof")
+    assert len(run["written"]) == 2 and len(history.read_history()) == 2
+
+
+def test_a_review_that_cannot_be_written_takes_its_log_row_back_out(course, monkeypatch):
+    sub = submissions.submit(course["assignment"]["assignment_id"], "alice", "an essay " * 30)
+
+    def refuse(*args, **kwargs):
+        raise store.FileProblem(paths.reviews_path(), "write to", PermissionError(13, "denied"))
+    monkeypatch.setattr(reviews, "record_detection", refuse)
+    with pytest.raises(store.FileProblem):
+        detection.detect_submission(FakeEngine(), threading.Lock(), sub, "prof")
+    assert history.read_history() == []
+
+
+def test_a_missing_text_is_skipped_and_the_rest_are_scored(course, people):
+    todo = _two_waiting(course, people)
+    paths.resolve(todo[0]["text_path"]).unlink()
+    seen = []
+    run = detection.detect_many(FakeEngine(), threading.Lock(), todo, "prof",
+                                on_progress=lambda d, t, s, r: seen.append((s["username"], r is None)))
+    assert [s["username"] for s, _ in run["skipped"]] == ["alice"]
+    assert "missing" in run["skipped"][0][1] and run["stopped"] is None
+    assert [r["username"] for r in run["written"]] == ["ben"]
+    assert seen == [("alice", True), ("ben", False)]

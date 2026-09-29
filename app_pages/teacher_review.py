@@ -30,14 +30,18 @@ if not mine:
     st.stop()
 
 names = {c["class_id"]: c["name"] for c in mine}
+terms = {c["class_id"]: c["term"] or "created " + common.when(c["created_at"]) for c in mine}
 pick_class, pick_task = st.columns(2)
 with pick_class:
-    class_id = common.choose("Class", list(names), "review_class", names.get)
+    class_id = common.choose("Class", list(names), "review_class", names.get, detail=terms.get)
 tasks = assignments.list_assignments(class_id)
 titles = {t["assignment_id"]: t["title"] for t in tasks}
+dates = {t["assignment_id"]: "due " + common.day(t["due_at"]) if t["due_at"]
+         else "created " + common.when(t["created_at"]) for t in tasks}
 with pick_task:
     if titles:
-        assignment_id = common.choose("Assignment", list(titles), "review_assignment", titles.get)
+        assignment_id = common.choose("Assignment", list(titles), "review_assignment", titles.get,
+                                      detail=dates.get)
     else:
         st.selectbox("Assignment", ["No assignments yet"], disabled=True, key="review_no_task")
 if not titles:
@@ -61,6 +65,7 @@ def save_decision(review_id):
         common.flash("Decision saved: {}.".format(common.decision_text(decision)), ":material/task_alt:")
 
 
+@common.safely
 def export_report():
     path = reports.export_assignment_report(assignment_id)
     common.flash("Report saved to {}.".format(common.data_label(path)), ":material/download:")
@@ -90,13 +95,23 @@ if request and request["assignment_id"] == assignment_id:
                       help="Submissions already scored keep their results.")
             bar = st.progress(0.0)
 
-            def progress(done, total, review):
+            def progress(done, total, submission, review):
+                outcome = common.verdict_text(review["label"]) if review else "skipped"
                 bar.progress(done / total, text="{}/{}  {}: {}".format(
-                    done, total, common.display_name(review["username"]),
-                    common.verdict_text(review["label"])))
-            written = detection.detect_many(engine, lock, todo, teacher, on_progress=progress)
-            status.update(label="Scored {} submission{}".format(len(written), "" if len(written) == 1 else "s"),
-                          state="complete", expanded=False)
+                    done, total, common.display_name(submission["username"]), outcome))
+            run = detection.detect_many(engine, lock, todo, teacher, on_progress=progress)
+            scored = len(run["written"])
+            for submission, reason in run["skipped"]:
+                st.warning("{}: {}".format(common.display_name(submission["username"]), reason),
+                           icon=":material/warning:")
+            if run["stopped"]:
+                st.error(run["stopped"], icon=":material/error:")
+                st.caption("{} of {} scored before it stopped; the rest are still waiting.".format(
+                    scored, len(todo)))
+            status.update(label="Scored {} of {} submission{}".format(
+                              scored, len(todo), "" if len(todo) == 1 else "s"),
+                          state="error" if run["stopped"] or run["skipped"] else "complete",
+                          expanded=bool(run["stopped"] or run["skipped"]))
 
 frame = reports.assignment_frame(assignment_id)
 counts = reports.state_counts(frame)
@@ -188,7 +203,7 @@ labels = dict(zip(frame["username"], frame["display_name"]))
 states = dict(zip(frame["username"], frame["state"]))
 with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="bottom"):
-        username = common.choose("Student", usernames, "review_pick", labels.get)
+        username = common.choose("Student", usernames, "review_pick", labels.get, detail=str)
         common.state_badge(states[username])
     sub = submissions.current_submission(assignment_id, username)
     if sub is None:
@@ -208,7 +223,9 @@ with st.container(border=True):
             if sub["version_note"]:
                 st.caption("Student's note: {}".format(sub["version_note"]))
             with st.container(height=380, border=True):
-                st.markdown(common.plain(submissions.read_text(sub)))
+                text = common.submission_text(sub)
+                if text is not None:
+                    st.markdown(common.plain(text))
             older = submissions.versions(assignment_id, username)[:-1]
             if older:
                 with st.expander("Earlier versions ({})".format(len(older)), icon=":material/history:"):
@@ -219,7 +236,9 @@ with st.container(border=True):
                                 version["version"], common.when(version["submitted_at"]),
                                 version["words"], note))
                             with st.popover("Show text", key="old_" + version["submission_id"]):
-                                st.markdown(common.plain(submissions.read_text(version)))
+                                text = common.submission_text(version)
+                                if text is not None:
+                                    st.markdown(common.plain(text))
         with score_col:
             review = reviews.latest_review(sub["submission_id"])
             if review is None:
@@ -251,11 +270,23 @@ with st.container(border=True):
                                      default=review["decision"] if review["decision"] != "pending" else None)
                 st.text_area("Note to the student", value=review["note"], key="note_" + rid, height=100,
                              placeholder="Explain your decision in a sentence or two.")
+                changed = reviews.changed_since_return(review)
+                if changed:
+                    shown = reviews.shown_to_student(review)
+                    st.caption("You changed this after returning it. The student still sees "
+                               "**{}**{} until you return it again.".format(
+                                   common.decision_text(shown["decision"]),
+                                   " and your earlier note" if shown["note"] else ""))
                 with st.container(horizontal=True, vertical_alignment="center"):
                     st.button("Save decision", key="save_" + rid, on_click=save_decision, args=(rid,))
-                    if review["returned"] == "1":
+                    if review["returned"] == "1" and not changed:
                         st.badge("Returned {}".format(common.when(review["returned_at"])), color="green",
                                  icon=":material/done_all:")
+                    elif changed:
+                        st.button("Return again", type="primary",
+                                  icon=":material/assignment_return:", key="return_" + rid,
+                                  on_click=common.open_dialog, args=("return_work",),
+                                  kwargs={"review_id": rid, "teacher": teacher})
                     elif review["decision"] != "pending":
                         st.button("Return to student", type="primary",
                                   icon=":material/assignment_return:", key="return_" + rid,

@@ -11,11 +11,21 @@ The same rules history.py follows, in one place:
   (backup first), so a column can be added later without losing data.
 - One re-entrant lock per file serialises read-modify-write inside this
   process; Streamlit runs every browser session as a thread of one process.
+- Files are read as "utf-8-sig": a file saved back by Excel or Notepad may
+  start with a byte-order mark, which would otherwise glue itself to the
+  first column name. Files are written without one.
+- A file that cannot be read or written (a CSV open in Excel is locked, a
+  folder is read-only, the disk is full) raises FileProblem, a ValueError
+  whose message names the file and what to do. Pages already show every
+  ValueError as a message, so a busy file is never a crash.
 """
 
+import contextlib
 import copy
 import csv
 import datetime
+import errno
+import io
 import json
 import os
 import pathlib
@@ -49,30 +59,131 @@ def new_id(prefix):
     return "{}_{}".format(prefix, uuid.uuid4().hex[:8])
 
 
+# ------------------------------------------------------------------- errors
+def shown_path(path):
+    """How a file is named in messages: data/..., logs/..., or its name."""
+    path = pathlib.Path(path)
+    for root, prefix in ((paths.DATA_DIR, "data/"), (paths.BASE_DIR, "")):
+        try:
+            return prefix + path.resolve().relative_to(pathlib.Path(root).resolve()).as_posix()
+        except ValueError:
+            continue
+    return path.name
+
+
+class FileProblem(ValueError):
+    """A data file could not be read or written. A ValueError, so every form
+    that shows a broken rule shows this too; the message says which file and
+    what to do. Raised before anything was changed, or after the change was
+    undone."""
+
+    def __init__(self, path, doing, error):
+        self.path, self.error = pathlib.Path(path), error
+        if isinstance(error, PermissionError):
+            hint = ("It is probably open in another program, such as Excel, which locks the "
+                    "files it opens. Close it there and try again.")
+        elif getattr(error, "errno", None) == errno.ENOSPC:
+            hint = "The disk is full."
+        elif isinstance(error, UnicodeDecodeError):
+            hint = ("It is not UTF-8 text; a spreadsheet program may have saved it in another "
+                    "encoding. Save it as \"CSV UTF-8\", or restore it from data/backups.")
+        elif isinstance(error, FileNotFoundError):
+            hint = "It is missing; it was moved or deleted outside MarkText."
+        else:
+            hint = str(error)
+        super().__init__("MarkText could not {} {}. {}".format(doing, shown_path(path), hint))
+
+
+@contextlib.contextmanager
+def file_errors(path, doing):
+    """Turn an OSError or UnicodeDecodeError raised inside into FileProblem."""
+    try:
+        yield
+    except FileProblem:
+        raise
+    except (OSError, UnicodeDecodeError) as exc:
+        raise FileProblem(path, doing, exc) from exc
+
+
+def check_writable(*files):
+    """Open each existing file for appending and close it again, writing
+    nothing. Used before work that writes several files, so a file that is
+    open in Excel stops the work before the first write, not halfway."""
+    for path in files:
+        path = pathlib.Path(path)
+        if path.exists():
+            with file_errors(path, "write to"):
+                with open(path, "a", encoding="utf-8"):
+                    pass
+
+
+# -------------------------------------------------------------------- dates
+# Excel rewrites the dates it recognises when it saves a CSV: 2026-10-15
+# becomes 10/15/2026 and a timestamp loses its seconds. These formats read
+# both; month first is how Excel writes them under US settings, the Windows
+# default here. A value in none of them stays text: shown as it is, never a
+# crash.
+DATE_FORMATS = ("%Y-%m-%d", "%m/%d/%Y", "%Y/%m/%d")
+TIME_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M",
+                "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M")
+
+
+def parse_time(value):
+    """A datetime from a stored timestamp, or None."""
+    if isinstance(value, datetime.datetime):
+        return value
+    text = value.strip() if isinstance(value, str) else ""
+    for fmt in TIME_FORMATS:
+        try:
+            return datetime.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def parse_date(value):
+    """A datetime.date from a stored date (or timestamp), or None."""
+    if isinstance(value, datetime.datetime):
+        return value.date()
+    if isinstance(value, datetime.date):
+        return value
+    text = value.strip() if isinstance(value, str) else ""
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    moment = parse_time(text)
+    return moment.date() if moment else None
+
+
+# ------------------------------------------------------------------ backups
 def backup(path):
     """Copy a file into data/backups/ before it is rewritten. Microseconds in
     the name, so two rewrites in the same second keep both copies."""
     path = pathlib.Path(path)
     if not path.exists():
         return None
-    paths.backups_dir().mkdir(parents=True, exist_ok=True)
     moment = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     target = paths.backups_dir() / "{}_{}{}".format(path.stem, moment, path.suffix)
-    shutil.copyfile(path, target)
+    with file_errors(target, "write the backup copy"):
+        paths.backups_dir().mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, target)
     return target
 
 
 def _replace(path, write):
     """Call write(tmp_path), then atomically move the temp file over path."""
     path = pathlib.Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    try:
-        write(tmp)
-        os.replace(tmp, path)
-    finally:
-        if tmp.exists():                      # only after a failed write
-            tmp.unlink()
+    with file_errors(path, "save"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            write(tmp)
+            os.replace(tmp, path)
+        finally:
+            if tmp.exists():                  # only after a failed write
+                tmp.unlink()
 
 
 # ---------------------------------------------------------------------- JSON
@@ -85,13 +196,14 @@ def read_json(path, default):
         if not path.exists() or path.stat().st_size == 0:
             return copy.deepcopy(default)
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            with file_errors(path, "read"):
+                with open(path, "r", encoding="utf-8-sig") as f:
+                    data = json.load(f)
         except json.JSONDecodeError as exc:
-            raise ValueError("{} is not valid JSON ({}). Restore it from a copy in {}.".format(
-                path.name, exc, paths.backups_dir())) from exc
+            raise ValueError("{} is not valid JSON ({}). Restore it from a copy in "
+                             "data/backups.".format(shown_path(path), exc)) from exc
         if not isinstance(data, dict):
-            raise ValueError("{} should hold a JSON object.".format(path.name))
+            raise ValueError("{} should hold a JSON object.".format(shown_path(path)))
         return data
 
 
@@ -140,20 +252,22 @@ def ensure_csv(path, columns):
         if not path.exists() or path.stat().st_size == 0:
             _replace(path, lambda tmp: _write_csv(tmp, columns, []))
             return
-        with open(path, "r", newline="", encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader, [])
+        with file_errors(path, "read"):
+            with open(path, "r", newline="", encoding="utf-8-sig") as f:
+                header = next(csv.reader(f), [])
         if header == columns:
             return
         if header and header == columns[:len(header)]:
             # an older layout without the newest columns: extend it
-            with open(path, "r", newline="", encoding="utf-8") as f:
-                rows = list(csv.DictReader(f))
+            with file_errors(path, "read"):
+                with open(path, "r", newline="", encoding="utf-8-sig") as f:
+                    rows = list(csv.DictReader(f))
             backup(path)
             _replace(path, lambda tmp: _write_csv(tmp, columns, rows))
             return
         raise ValueError("{} has the columns {} but MarkText expects {}. The file was not "
-                         "changed.".format(path.name, header, columns))
+                         "changed; restore it from data/backups.".format(shown_path(path), header,
+                                                                        columns))
 
 
 def read_rows(path, columns):
@@ -161,8 +275,9 @@ def read_rows(path, columns):
     path = pathlib.Path(path)
     with lock_for(path):
         ensure_csv(path, columns)
-        with open(path, "r", newline="", encoding="utf-8") as f:
-            return [dict(row) for row in csv.DictReader(f)]
+        with file_errors(path, "read"):
+            with open(path, "r", newline="", encoding="utf-8-sig") as f:
+                return [dict(row) for row in csv.DictReader(f)]
 
 
 def append_row(path, columns, row):
@@ -170,9 +285,10 @@ def append_row(path, columns, row):
     path = pathlib.Path(path)
     with lock_for(path):
         ensure_csv(path, columns)
-        with open(path, "a", newline="", encoding="utf-8") as f:
-            csv.DictWriter(f, fieldnames=list(columns)).writerow(
-                {k: _cell(row.get(k, "")) for k in columns})
+        with file_errors(path, "write to"):
+            with open(path, "a", newline="", encoding="utf-8") as f:
+                csv.DictWriter(f, fieldnames=list(columns)).writerow(
+                    {k: _cell(row.get(k, "")) for k in columns})
     return row
 
 
@@ -226,26 +342,29 @@ def unique_path(folder, stem, suffix):
 
 
 def write_new_text(path, text):
-    """Create a text file that must not exist yet (mode "x" never overwrites)."""
+    """Create a text file that must not exist yet (mode "x" never overwrites).
+    newline="" writes the text's own "\\n" line ends, so the file's bytes are
+    exactly the UTF-8 of `text` and a hash of one is a hash of the other."""
     path = pathlib.Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "x", encoding="utf-8") as f:
-        f.write(text)
+    with file_errors(path, "create"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "x", encoding="utf-8", newline="") as f:
+            f.write(text)
     return path
 
 
 def write_new_json(path, data):
     path = pathlib.Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "x", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+    with file_errors(path, "create"):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "x", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
     return path
 
 
 def csv_text(columns, rows):
     """The same CSV that write_new_csv() would write, as a string (for a
     browser download of exactly what is saved on the server)."""
-    import io
     buffer = io.StringIO(newline="")
     writer = csv.DictWriter(buffer, fieldnames=list(columns))
     writer.writeheader()
@@ -259,6 +378,6 @@ def write_new_csv(path, columns, rows):
     half-written report never appears under its final name."""
     path = pathlib.Path(path)
     if path.exists():
-        raise FileExistsError(path)
+        raise FileProblem(path, "create", FileExistsError(errno.EEXIST, "it already exists"))
     _replace(path, lambda tmp: _write_csv(tmp, columns, rows))
     return path

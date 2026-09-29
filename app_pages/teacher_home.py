@@ -10,7 +10,7 @@ import datetime
 import pandas as pd
 import streamlit as st
 
-from classroom import reports, seed_demo
+from classroom import accounts, reports, seed_demo
 from ui import charts, common, dialogs
 
 user = common.require_role("teacher")
@@ -18,21 +18,52 @@ state = st.session_state
 config = common.load_config()
 
 
-def load_demo():
+def load_demo(password):
     with st.status("Building the demo class...", expanded=True) as status:
         st.write("Loading the model (about 20 s the first time)...")
         engine, lock = common.engine()
         try:
-            summary = seed_demo.seed(user["username"], engine, lock, on_step=st.write)
+            summary = seed_demo.seed(user["username"], engine, lock, on_step=st.write,
+                                     password=password)
         except ValueError as exc:
             status.update(label="The demo class could not be built", state="error")
             st.error(str(exc), icon=":material/error:")
             return
         status.update(label="Demo class ready", state="complete")
-    common.flash("Demo class ready. Students sign in with the password {}.".format(
-        seed_demo.DEMO_PASSWORD), ":material/school:")
+    if summary["accounts_created"]:
+        common.flash("Demo class ready. The students sign in with the password you chose.",
+                     ":material/school:")
+    else:
+        common.flash("Demo class ready. The demo students already had accounts; their passwords "
+                     "did not change.", ":material/school:")
     common.open_review(summary["class_id"], summary["assignment_id"])
     st.rerun()
+
+
+@st.dialog("Load the demo class", icon=":material/science:", on_dismiss=common.close_dialog)
+def demo_dialog():
+    st.write("Adds five student accounts (alice, ben, chloe, dan and eva), a class with one "
+             "assignment, four essays written by people and one drafted with the assistant, then "
+             "scores them. Takes about a minute.")
+    with st.form("demo", border=False):
+        password = st.text_input("Password for the demo students", key="demo_password",
+                                 value=state.setdefault("_demo_suggestion", seed_demo.new_password()),
+                                 help="Shown here so you can write it down; you sign in as a demo "
+                                      "student with it. Not stored anywhere in plain text.")
+        with st.container(horizontal=True, horizontal_alignment="right"):
+            cancel = st.form_submit_button("Cancel", key="demo_cancel")
+            build = st.form_submit_button("Build the demo class", type="primary", key="demo_build")
+    if cancel:
+        common.finish_dialog()
+    if build:
+        try:
+            accounts.validate_password(password)
+        except ValueError as exc:
+            st.error(str(exc), icon=":material/error:")
+        else:
+            state["demo_request"] = password
+            state.pop("_demo_suggestion", None)
+            common.finish_dialog()
 
 
 overview = reports.teacher_overview(user["username"])
@@ -47,9 +78,13 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
         st.button("New class", type="primary", icon=":material/add:", on_click=common.open_dialog,
                   args=("create_class",), kwargs={"teacher": user["username"]}, key="home_add_class")
 
-for note in state.get("config_notes", []):
-    if "public default" in note:
-        st.warning(note, icon=":material/key:")
+if state.get("config_notes"):
+    with st.container(border=True):
+        for note in state["config_notes"]:
+            st.warning(note, icon=":material/key:" if "key" in note else ":material/settings:")
+        st.button("Dismiss", key="home_dismiss_notes", on_click=common.dismiss_notes, type="tertiary",
+                  help="Hides these notes for this session. A note about the public key comes back "
+                       "on the next visit while that key is in use.")
 
 # ------------------------------------------------------------ no classes
 if overview["classes"] == 0:
@@ -60,13 +95,14 @@ if overview["classes"] == 0:
         st.button("Create your first class", type="primary", icon=":material/add:",
                   on_click=common.open_dialog, args=("create_class",),
                   kwargs={"teacher": user["username"]}, key="home_new_class")
-        demo = st.button("Load the demo class", icon=":material/science:", key="home_demo",
-                         help="Adds the students alice, ben, chloe, dan and eva, one assignment, "
-                              "four essays written by people and one drafted with the assistant, "
-                              "then scores them. Takes about a minute.")
-    if demo:
-        load_demo()
-    common.render_dialogs({"create_class": dialogs.create_class})
+        st.button("Load the demo class", icon=":material/science:", key="home_demo",
+                  on_click=common.open_dialog, args=("demo",),
+                  help="Five demo students, one assignment and scored essays, for trying MarkText "
+                       "out. Takes about a minute.")
+    request = state.pop("demo_request", None)
+    if request:
+        load_demo(request)
+    common.render_dialogs({"create_class": dialogs.create_class, "demo": demo_dialog})
     st.stop()
 
 # ------------------------------------------------------------ figures

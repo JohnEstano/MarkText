@@ -5,8 +5,13 @@ in config/watermark_config.json. A fresh config is created from defaults
 on first run, with a newly generated private hashing key.
 
 load_config() merges the file over DEFAULT_CONFIG, validates the result,
-and can report what it had to do (backup a corrupt file, generate a key,
-warn about the public default key) through an optional `notes` list.
+and can report what it had to do (generate a key, add a key id, warn about
+the public default key) through an optional `notes` list.
+
+A file that exists but cannot be read (a typo in the JSON, a wrong value)
+stops the program with a ValueError that names the problem. It is never
+replaced: a replacement would carry a new hashing key, and every text
+watermarked with the old key would silently stop being detected.
 
 The hashing key is the one secret in this file. public_watermark() and
 redacted() are the only ways config data should leave the machine (sidecar
@@ -15,7 +20,6 @@ current key, so a review can say which key scored it without revealing it.
 """
 
 import copy
-import datetime
 import json
 import pathlib
 import re
@@ -164,24 +168,24 @@ def load_config(path=None, notes=None):
     anything the loader had to do; front-ends show them to the user."""
     path = pathlib.Path(path or CONFIG_PATH)
     notes = notes if notes is not None else []
-    user = None
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                loaded = json.load(f)
-            if isinstance(loaded, dict):
-                user = loaded
-            else:
-                raise ValueError("top level is not an object")
-        except (json.JSONDecodeError, OSError, ValueError) as exc:
-            backup = _backup_bad(path)
-            notes.append("Config file could not be read ({}); it was moved to {} "
-                         "and recreated with defaults.".format(exc, backup.name))
-
-    if user is None:
+    if not path.exists():
         config = create_config(path)
         notes.append("Config created at {} with a new private hashing key.".format(path))
         return config
+    try:
+        # utf-8-sig: Notepad may save the file with a byte-order mark
+        with open(path, "r", encoding="utf-8-sig") as f:
+            user = json.load(f)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(
+            "{} is not valid JSON ({}). Nothing was changed. Fix the file (compare it with "
+            "watermark_config.example.json). Do not delete it unless you accept a new hashing key: "
+            "texts watermarked with the current key would no longer be detected.".format(
+                path.name, exc)) from exc
+    except OSError as exc:
+        raise ValueError("{} could not be read ({}).".format(path.name, exc)) from exc
+    if not isinstance(user, dict):
+        raise ValueError("{} should hold a JSON object at the top level.".format(path.name))
 
     config = _deep_merge(DEFAULT_CONFIG, user)
     wm = config["watermark"]
@@ -204,13 +208,6 @@ def load_config(path=None, notes=None):
                      "Delete config/watermark_config.json to get a private key "
                      "(old texts will then no longer be detectable).")
     return config
-
-
-def _backup_bad(path):
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup = path.with_name("{}.bad-{}.json".format(path.stem, stamp))
-    path.replace(backup)
-    return backup
 
 
 def create_config(path=None):

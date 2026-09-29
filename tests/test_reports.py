@@ -82,7 +82,9 @@ def test_student_overview_hides_the_detector(five_states):
 def test_seed_demo_with_a_model(data_dir):
     summary = seed_demo.seed(engine=FakeEngine(), lock=threading.Lock())
     assert summary["teacher"] == "prof" and summary["drafted"] and summary["scored"] == 5
-    assert accounts.authenticate("prof", seed_demo.DEMO_PASSWORD)
+    # no password in the source code: a random one, returned once
+    assert accounts.authenticate("prof", summary["password"])
+    assert not accounts.is_weak(summary["password"])
     frame = reports.assignment_frame(summary["assignment_id"])
     labels = dict(zip(frame["username"], frame["label"]))
     assert labels["dan"] == "LIKELY MARKTEXT"
@@ -136,3 +138,21 @@ def test_recent_daily_counts_and_due_soon():
     today = datetime.date(2026, 9, 29)
     assert reports.due_soon("2026-10-02", today=today) and reports.due_soon("2026-09-29", today=today)
     assert not reports.due_soon("2026-10-20", today=today) and not reports.due_soon("", today=today)
+
+
+def test_seed_demo_uses_the_password_it_is_given(data_dir):
+    summary = seed_demo.seed(password="river-lamp-41")
+    assert accounts.authenticate("alice", "river-lamp-41") and summary["password"] == "river-lamp-41"
+    with pytest.raises(ValueError, match="common"):
+        seed_demo.seed(password="password123")
+
+
+def test_a_decision_changed_after_return_counts_as_decided_again(five_states):
+    aid = five_states["assignment"]["assignment_id"]
+    alice = reviews.latest_review(submissions.current_submission(aid, "alice")["submission_id"])
+    reviews.decide(alice["review_id"], "accepted", "Fine after all", "prof")
+    states = dict(zip(*[reports.assignment_frame(aid)[c] for c in ("username", "state")]))
+    assert states["alice"] == "decided"
+    shown = reports.student_overview("alice")[0]
+    assert (shown["my_state"], shown["decision"], shown["note"]) == ("returned", "flagged", "Talk to me")
+

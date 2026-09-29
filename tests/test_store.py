@@ -1,4 +1,5 @@
 import csv
+import datetime
 import json
 
 import pytest
@@ -111,3 +112,54 @@ def test_paths_are_stored_relative_to_the_data_folder(data_dir):
     rel = paths.data_relative(target)
     assert rel == "submissions/c/v001.txt"
     assert paths.resolve(rel) == target
+
+
+def test_a_byte_order_mark_from_excel_is_ignored(data_dir):
+    path = data_dir / "t.csv"
+    path.write_bytes("\ufeffa,b\r\n1,x\r\n".encode("utf-8"))
+    assert store.read_rows(path, ["a", "b"]) == [{"a": "1", "b": "x"}]
+    store.append_row(path, ["a", "b"], {"a": "2", "b": "y"})
+    assert [r["a"] for r in store.read_rows(path, ["a", "b"])] == ["1", "2"]
+    j = data_dir / "t.json"
+    j.write_bytes("\ufeff{\"k\": 1}".encode("utf-8"))
+    assert store.read_json(j, {}) == {"k": 1}
+
+
+def test_a_locked_file_raises_a_message_that_names_it(data_dir, excel_lock):
+    path = data_dir / "t.csv"
+    store.append_row(path, ["a"], {"a": "1"})
+    excel_lock(path)
+    with pytest.raises(store.FileProblem, match="data/t.csv.*Excel"):
+        store.append_row(path, ["a"], {"a": "2"})
+    with pytest.raises(ValueError, match="Close it"):          # a ValueError for the pages
+        store.rewrite_rows(path, ["a"], [{"a": "3"}])
+    assert store.read_rows(path, ["a"]) == [{"a": "1"}]       # reading still works, nothing changed
+    assert not path.with_name("t.csv.tmp").exists()
+
+
+def test_check_writable_writes_nothing(data_dir, excel_lock):
+    path = data_dir / "t.csv"
+    store.append_row(path, ["a"], {"a": "1"})
+    before = path.read_bytes()
+    store.check_writable(path, data_dir / "missing.csv")
+    assert path.read_bytes() == before and not (data_dir / "missing.csv").exists()
+    excel_lock(path)
+    with pytest.raises(store.FileProblem):
+        store.check_writable(path)
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("2026-10-15", datetime.date(2026, 10, 15)),
+    ("10/15/2026", datetime.date(2026, 10, 15)),               # how Excel saves it back
+    ("2026/10/15", datetime.date(2026, 10, 15)),
+    ("2026-09-29 14:05:12", datetime.date(2026, 9, 29)),
+    ("tomorrow", None), ("", None), (None, None),
+])
+def test_dates_as_excel_writes_them(text, expected):
+    assert store.parse_date(text) == expected
+
+
+def test_timestamps_as_excel_writes_them():
+    assert store.parse_time("9/29/2026 14:05") == datetime.datetime(2026, 9, 29, 14, 5)
+    assert store.parse_time("2026-09-29 14:05:12") == datetime.datetime(2026, 9, 29, 14, 5, 12)
+    assert store.parse_time("soon") is None

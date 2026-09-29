@@ -27,6 +27,12 @@ class FakeEngine:
         self.config = config or fake_config()
         self.generated, self.detected = [], []
 
+    def reconfigure(self, config):
+        if config["model_id"] != self.config["model_id"]:
+            return False
+        self.config = config
+        return True
+
     def generate(self, prompt, max_new_tokens=None, watermarked=True, seed=None, cancel_event=None):
         n = int(max_new_tokens or self.config["max_new_tokens"])
         self.generated.append((prompt, n, watermarked))

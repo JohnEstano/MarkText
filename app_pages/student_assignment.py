@@ -23,12 +23,15 @@ if not tasks:
     st.stop()
 
 titles = {t["assignment_id"]: t["title"] for t in tasks}
+class_names = {c["class_id"]: c["name"] for c in classes.classes_for_student(user["username"])}
+where = {t["assignment_id"]: class_names.get(t["class_id"], "") for t in tasks}
 assignment_id = common.choose("Assignment", list(titles), "open_assignment_id", titles.get,
-                              label_visibility="collapsed")
+                              detail=where.get, label_visibility="collapsed")
 task = assignments.get_assignment(assignment_id)
 current = submissions.current_submission(assignment_id, user["username"])
-review = reviews.latest_review(current["submission_id"]) if current else None
-returned = bool(review and review["returned"] == "1")
+# only what the teacher returned, as it was returned; never the detector's numbers
+shown = reviews.shown_to_student(reviews.latest_review(current["submission_id"])) if current else None
+returned = shown is not None
 # The editor's text lives in a plain key (draft_<id>) as well as in the widget
 # (editor_<id>): Streamlit drops a widget's value when its page is not shown,
 # and a half-written essay must survive a visit to another page.
@@ -124,15 +127,17 @@ if returned:
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Your teacher's decision", icon=":material/assignment_return:", anchor=False)
-            common.decision_badge(review["decision"])
-        st.caption("On version {}, returned {}".format(review["version"], common.when(review["returned_at"])))
-        if review["note"]:
-            st.markdown(common.plain(review["note"]))
+            common.decision_badge(shown["decision"])
+        st.caption("On version {}, returned {}".format(current["version"], common.when(shown["returned_at"])))
+        if shown["note"]:
+            st.markdown(common.plain(shown["note"]))
 
 if current:
     with st.expander("What you handed in: version {}, {}".format(
             current["version"], common.when(current["submitted_at"])), icon=":material/visibility:"):
-        st.markdown(common.plain(submissions.read_text(current)))
+        text = common.submission_text(current)
+        if text is not None:
+            st.markdown(common.plain(text))
 
 if task["status"] != "open":
     st.info("This assignment is closed. Your teacher is no longer accepting work for it.",

@@ -108,6 +108,8 @@ The key never leaves the config file: generation results, sidecars, reports and 
 
 Every write follows the same rules (`classroom/store.py`, `history.py`): paths come from `pathlib` anchored on the project folder; text files are opened with `encoding="utf-8"`; CSV files go through `csv.DictWriter`/`DictReader` with a fixed column list and `newline=""`; a rewrite first copies the old file to a backup, then writes a temporary file and swaps it in with `os.replace`, so a crash never leaves half a file; a file with unexpected columns is refused, not "repaired"; new files never overwrite old ones. One lock per file keeps two browser sessions from interleaving a read-modify-write.
 
+When a file cannot be read or written, for example a CSV that is open in Excel (which locks the files it opens), the page shows a message naming the file and nothing is left half-done: a hand-in that fails removes the two files it had just created, and scoring checks both the history log and `reviews.csv` before the detector runs and takes the log row back out if the review row still fails. Files are read with `encoding="utf-8-sig"`, so a file saved back by Excel or Notepad (which may add a byte-order mark) still reads, and dates in the forms Excel writes (`10/15/2026`) are understood. A damaged `config/watermark_config.json` stops the app with a message instead of being replaced, because a replacement would carry a new key and earlier texts would silently stop being detected.
+
 What the teacher's actions do to the files:
 
 | Teacher action | Reads | Writes | Updates | Processes |
@@ -120,7 +122,7 @@ What the teacher's actions do to the files:
 | Create, close, reopen an assignment | `assignments.csv` | a row | status | |
 | Open a submission | `vNNN.txt`, its sidecar, `reviews.csv` | | | |
 | Score one or all submissions | the texts | a history row and a review row each | | tokenises and runs the z-test |
-| Decide, return | `reviews.csv` | backup | decision, note, returned | |
+| Decide, return | `reviews.csv` | backup | decision, note, returned (a copy of the decision and note the student sees) | a decision changed after returning waits for the next return |
 | Export a report | roster, submissions, reviews | `data/reports/assignment_*.csv`, `class_*_summary_*.csv` | | pandas left joins, one state per student |
 | Lab pages | history CSV, prompts, TXT uploads | TXT + JSON, new CSVs | note or filename of one record | summaries, charts, batch rates |
 
@@ -143,15 +145,18 @@ streamlit run app.py
 
 It opens at http://localhost:8501 (bound to localhost in `.streamlit/config.toml`). The first visit shows a setup screen that creates the teacher account. The model (about 1 GB) downloads into `~/.cache/huggingface/hub` the first time a page needs it; signing in and browsing never wait for it.
 
-A demo class for presentations (teacher `prof`, students `alice`, `ben`, `chloe`, `dan`, `eva`, password `marktext-demo`; four essays written by people and one drafted with the assistant, all scored):
+A demo class for presentations (teacher `prof`, students `alice`, `ben`, `chloe`, `dan`, `eva`; four essays written by people and one drafted with the assistant, all scored). The demo accounts get the password you pass with `--password`, or a random one that is printed at the end; no password is written in the code:
 
 ```bash
-python -m classroom.seed_demo              # about two minutes on a CPU
-python -m classroom.seed_demo --no-model   # quick: essays only, nothing scored
-python -m classroom.seed_demo --reset      # move data/ aside first (renamed, never deleted)
+python -m classroom.seed_demo                        # about two minutes on a CPU
+python -m classroom.seed_demo --password "..."       # choose the demo accounts' password
+python -m classroom.seed_demo --no-model             # quick: essays only, nothing scored
+python -m classroom.seed_demo --reset                # move data/ aside first (renamed, never deleted)
 ```
 
-The teacher's home page offers the same demo with one button when there are no classes yet.
+The teacher's home page offers the same demo when there are no classes yet; it asks for the demo students' password first.
+
+Passwords need at least eight characters, may not be one of the most common passwords and may not contain the username. An older account with a weak password still signs in and is asked to change it.
 
 More teachers, and password resets, from the command line:
 

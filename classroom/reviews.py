@@ -7,6 +7,13 @@ which model and key produced it. The teacher then records a decision and a
 note and returns it to the student. Measurements are never edited: only the
 EDITABLE fields change, each time with a backup. Scoring a submission again
 appends a new row that carries the decision over; the latest row wins.
+
+Returning copies the decision and the note into returned_decision and
+returned_note, and the student only ever sees that copy. A teacher who
+changes a decision after returning it is editing a draft: the student keeps
+seeing what was returned until the work is returned again (the way Google
+Classroom treats a changed grade). Rows written before these two columns
+existed have them empty and show the decision itself.
 """
 
 from classroom import classes, paths, store
@@ -14,11 +21,12 @@ from classroom import classes, paths, store
 COLUMNS = ["review_id", "submission_id", "assignment_id", "class_id", "username", "version",
            "run_id", "model_id", "key_id", "device", "tokens_scored", "green_pct", "z_score",
            "p_value", "label", "detected_at", "detected_by", "decision", "note", "returned",
-           "returned_at", "decided_by", "decided_at"]
+           "returned_at", "decided_by", "decided_at", "returned_decision", "returned_note"]
 DECISIONS = ("pending", "accepted", "flagged", "needs_review")
 DECISION_LABELS = {"pending": "Pending", "accepted": "Accepted", "flagged": "Flagged",
                    "needs_review": "Needs review"}
-EDITABLE = ("decision", "note", "returned", "returned_at", "decided_by", "decided_at")
+EDITABLE = ("decision", "note", "returned", "returned_at", "decided_by", "decided_at",
+            "returned_decision", "returned_note")
 CARRIED_OVER = EDITABLE
 MAX_NOTE = 1000
 
@@ -49,10 +57,10 @@ def record_detection(submission, stats, run_id, model_id, key_id, detected_by):
         "detected_at": store.now(),
         "detected_by": detected_by,
         "decision": "pending", "note": "", "returned": "0", "returned_at": "",
-        "decided_by": "", "decided_at": "",
+        "decided_by": "", "decided_at": "", "returned_decision": "", "returned_note": "",
     }
     if previous:
-        row.update({k: previous[k] for k in CARRIED_OVER})
+        row.update({k: previous.get(k, "") for k in CARRIED_OVER})
     store.append_row(paths.reviews_path(), COLUMNS, row)
     return {k: str(v) for k, v in row.items()}
 
@@ -123,10 +131,36 @@ def decide(review_id, decision, note="", decided_by=""):
 
 
 def return_to_student(review_id, by=None):
-    """Make the decision and the note visible to the student."""
+    """Show the student the decision and the note as they are now."""
     review = get_review(review_id)
     if review is None:
         raise ValueError("There is no review {}.".format(review_id))
     if review["decision"] == "pending":
         raise ValueError("Record a decision before returning the work.")
-    return update_review(review_id, by=by, returned="1", returned_at=store.now())
+    return update_review(review_id, by=by, returned="1", returned_at=store.now(),
+                         returned_decision=review["decision"], returned_note=review["note"])
+
+
+def is_returned(review):
+    return review is not None and review.get("returned") == "1"
+
+
+def shown_to_student(review):
+    """What the student sees: {"decision", "note", "returned_at"} as last
+    returned, or None when nothing has been returned."""
+    if not is_returned(review):
+        return None
+    if review.get("returned_decision"):
+        return {"decision": review["returned_decision"], "note": review.get("returned_note", ""),
+                "returned_at": review["returned_at"]}
+    # a row returned before the snapshot columns existed
+    return {"decision": review["decision"], "note": review["note"], "returned_at": review["returned_at"]}
+
+
+def changed_since_return(review):
+    """True when the teacher changed the decision or the note after returning
+    the work, so the student still sees the older version."""
+    if not is_returned(review) or not review.get("returned_decision"):
+        return False
+    return (review["decision"], review["note"]) != (review["returned_decision"],
+                                                    review.get("returned_note", ""))

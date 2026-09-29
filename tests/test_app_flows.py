@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 import config as cfg
 import history
-from classroom import accounts, assignments, classes, detection, paths, reviews, submissions
+from classroom import accounts, assignments, classes, detection, paths, reviews, store, submissions
 from ui import common, lab
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -280,3 +280,117 @@ def test_student_home_figures(new_app, school):
     submissions.submit(aid, "alice", ESSAY)
     ok(at.run())
     assert {m.label: m.value for m in at.metric}["Waiting for your teacher"] == "1"
+
+
+# ------------------------------------------------------------ robustness
+def test_two_students_with_the_same_name_can_both_be_opened(new_app, school, people):
+    """Regression: a select box maps a picked label to the last option with
+    that label, so the first of two students with one name could not be opened."""
+    accounts.register("alice2", "studentpass", "student", "Alice Santos")
+    classes.join_class(school["class"]["join_code"], "alice2")
+    aid = school["assignment"]["assignment_id"]
+    submissions.submit(aid, "alice", ESSAY)
+    submissions.submit(aid, "alice2", ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    picker = at.selectbox(key="_pick_review_pick")
+    assert sorted(picker.options) == ["Alice Santos · alice", "Alice Santos · alice2"]
+    ok(picker.set_value("alice").run())
+    assert at.session_state["review_pick"] == "alice"
+    ok(at.selectbox(key="_pick_review_pick").set_value("alice2").run())
+    assert at.session_state["review_pick"] == "alice2"
+
+
+def test_a_weak_password_is_flagged_until_it_is_changed(new_app, people):
+    # an account from before the password rules, with the old demo password
+    store.update_json(paths.users_path(), accounts.EMPTY, lambda d: d["users"]["ben"].update(
+        password=accounts.hash_password("marktext-demo")))
+    at = sign_in(new_app(), "ben", "marktext-demo")
+    assert any("easy to guess" in w.value for w in at.warning)
+    follow(at, "account")
+    at.text_input(key="account_old").input("marktext-demo")
+    at.text_input(key="account_new").input("a-better-pass-9")
+    at.text_input(key="account_repeat").input("a-better-pass-9")
+    ok(at.button(key="account_change").click().run())
+    assert not any("easy to guess" in w.value for w in at.warning)
+
+
+def test_first_run_notes_reach_the_teacher_home(new_app):
+    at = ok(new_app())
+    at.text_input(key="setup_username").input("reyes")
+    at.text_input(key="setup_name").input("Prof. Reyes")
+    at.text_input(key="setup_password").input("teacherpass")
+    at.text_input(key="setup_repeat").input("teacherpass")
+    ok(at.button(key="setup_submit").click().run())
+    assert any("new private hashing key" in w.value for w in at.warning)
+    ok(at.button(key="home_dismiss_notes").click().run())
+    assert not any("hashing key" in w.value for w in at.warning)
+
+
+def test_a_decision_changed_after_return_needs_a_second_return(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    rid = detection.detect_submission(FakeEngine(), threading.Lock(), sub, "prof")["review_id"]
+    reviews.decide(rid, "accepted", "Well argued.", "prof")
+    reviews.return_to_student(rid, by="prof")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    at.segmented_control(key="decision_" + rid).set_value("flagged")
+    at.text_area(key="note_" + rid).input("Please come and see me.")
+    ok(at.button(key="save_" + rid).click().run())
+    assert any("still sees" in c.value for c in at.caption)
+    assert at.button(key="return_" + rid).label == "Return again"
+
+    def student_sees():
+        student = sign_in(new_app(), "alice", "studentpass")
+        ok(student.switch_page("app_pages/student_assignment.py").run())
+        return " ".join(m.value for m in student.markdown)
+    before = student_sees()
+    assert "Accepted" in before and "Well argued" in before and "come and see me" not in before
+    ok(at.button(key="return_" + rid).click().run())
+    ok(at.button(key="return_confirm").click().run())
+    after = student_sees()
+    assert "Flagged" in after and "come and see me" in after
+
+
+def test_a_damaged_data_file_shows_a_message_not_a_traceback(new_app, school):
+    paths.reviews_path().write_text("something,else\n1,2\n", encoding="utf-8")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    assert any("reviews.csv" in e.value and "backups" in e.value for e in at.error)
+
+
+def test_saving_a_decision_while_the_file_is_open_in_excel(new_app, school, excel_lock):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    rid = detection.detect_submission(FakeEngine(), threading.Lock(), sub, "prof")["review_id"]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    excel_lock(paths.reviews_path())
+    at.segmented_control(key="decision_" + rid).set_value("accepted")
+    ok(at.button(key="save_" + rid).click().run())
+    assert any("Excel" in t.value for t in at.toast)
+    assert reviews.get_review(rid)["decision"] == "pending"
+
+
+def test_scoring_skips_a_missing_text_and_says_so(new_app, school, people):
+    classes.join_class(school["class"]["join_code"], "ben")
+    aid = school["assignment"]["assignment_id"]
+    gone = submissions.submit(aid, "alice", ESSAY)
+    submissions.submit(aid, "ben", ESSAY)
+    paths.resolve(gone["text_path"]).unlink()
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    assert any("missing" in w.value for w in at.warning)
+    assert reviews.latest_review(gone["submission_id"]) is None
+    assert submissions.current_submission(aid, "ben") and len(reviews.list_reviews()) == 1
+
+
+def test_the_demo_class_uses_the_password_typed_in_the_dialog(new_app, data_dir):
+    accounts.register("prof", "teacherpass", "teacher", "Prof. Reyes")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    ok(at.button(key="home_demo").click().run())
+    at.text_input(key="demo_password").input("river-lamp-41")
+    ok(at.button(key="demo_build").click().run())
+    assert accounts.authenticate("dan", "river-lamp-41")
+    assert titles(at) == ["Review"]

@@ -8,6 +8,11 @@ beside v001 and marks the older index row "superseded" (a backed-up
 rewrite); the teacher reviews the "current" version and can open any older
 one. The sidecar records how the text was produced (typed, uploaded, or
 drafted with the assistant, with the seed and model), never the watermark key.
+
+A hand-in writes three files; if the last write fails (the index open in
+Excel), the two files it had just created are removed again, so a failed
+hand-in leaves nothing behind and the next one gets the same version number.
+The text file holds exactly the UTF-8 bytes whose sha256 is in the index.
 """
 
 import hashlib
@@ -25,6 +30,17 @@ MAX_NOTE = 200
 # what an assistant draft may record about itself (never the hashing key)
 GENERATION_KEYS = ("prompt", "seed", "mode", "model_id", "max_new_tokens", "new_tokens",
                    "device", "key_id", "cancelled")
+
+
+class MissingText(ValueError):
+    """A submission's text file is gone (moved or deleted outside MarkText).
+    The index row stays; restoring the file brings the submission back."""
+
+    def __init__(self, submission):
+        self.submission = submission
+        super().__init__("The text of version {} ({}) is missing: it was moved or deleted outside "
+                         "MarkText. The record is kept; restore the file to see the text again.".format(
+                             submission.get("version", "?"), "data/" + submission.get("text_path", "")))
 
 
 def _rows():
@@ -88,21 +104,28 @@ def submit(assignment_id, username, text, source="editor", upload_filename="",
             "version_note": version_note,
             "status": "current",
         }
-        txt = store.write_new_text(folder / (stem + ".txt"), text)
+        txt, side = folder / (stem + ".txt"), folder / (stem + ".json")
         row["text_path"] = paths.data_relative(txt)
         sidecar = dict(row)
         if source == "assistant" and generation:
             sidecar["generation"] = {k: generation.get(k) for k in GENERATION_KEYS if k in generation}
-        store.write_new_json(folder / (stem + ".json"), sidecar)
-
-        if any(r["status"] == "current" for r in mine):
-            mine_ids = {r["submission_id"] for r in mine}
-            for r in rows:
-                if r["submission_id"] in mine_ids and r["status"] == "current":
-                    r["status"] = "superseded"
-            store.rewrite_rows(index, COLUMNS, rows + [row])
-        else:
-            store.append_row(index, COLUMNS, row)
+        created = []
+        try:
+            store.check_writable(index)         # a locked index stops us before any file exists
+            created.append(store.write_new_text(txt, text))
+            created.append(store.write_new_json(side, sidecar))
+            if any(r["status"] == "current" for r in mine):
+                mine_ids = {r["submission_id"] for r in mine}
+                for r in rows:
+                    if r["submission_id"] in mine_ids and r["status"] == "current":
+                        r["status"] = "superseded"
+                store.rewrite_rows(index, COLUMNS, rows + [row])
+            else:
+                store.append_row(index, COLUMNS, row)
+        except ValueError:
+            for path in created:                  # made by this call, never in the index
+                path.unlink(missing_ok=True)
+            raise
     return {k: str(v) for k, v in row.items()}
 
 
@@ -114,11 +137,16 @@ def get_submission(submission_id):
 
 
 def read_text(submission):
-    """The stored text of a submission (a row or a submission id)."""
+    """The stored text of a submission (a row or a submission id). Raises
+    MissingText when the file is gone, FileProblem when it cannot be read."""
     if isinstance(submission, str):
         submission = get_submission(submission)
-    with open(paths.resolve(submission["text_path"]), "r", encoding="utf-8-sig") as f:
-        return f.read()
+    path = paths.resolve(submission["text_path"])
+    if not path.exists():
+        raise MissingText(submission)
+    with store.file_errors(path, "read"):
+        with open(path, "r", encoding="utf-8-sig") as f:
+            return f.read()
 
 
 def sidecar(submission):

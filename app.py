@@ -40,5 +40,12 @@ common.follow_goto()
 common.on_page_change(nav)
 if user:
     common.sidebar_footer(user)
+    if st.session_state.get("weak_password"):
+        st.warning("Your password is easy to guess, or it was published as a demo password. "
+                   "Change it on the Account page.", icon=":material/lock_reset:")
 common.show_flash()
-nav.run()
+try:
+    nav.run()
+except (ValueError, OSError) as exc:
+    # a damaged, missing or locked data file: one message, not a traceback
+    common.problem(exc)

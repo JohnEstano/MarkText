@@ -12,6 +12,11 @@ history" empties the log (with a backup) and a review must outlive that.
 Neither file lets a measurement change once written, so the copies cannot
 drift apart; the history run_id links them.
 
+The two rows are written together or not at all: both files are checked
+for writing before the detector runs (a CSV open in Excel stops the work
+there), and if the review row still cannot be written, the history row
+just added is taken out again.
+
 The engine is a parameter. A later version with several models or keys
 passes another engine, and each review records which one scored the text
 (model_id, key_id).
@@ -21,7 +26,7 @@ import json
 
 import history
 import verdict
-from classroom import classes, reviews, submissions
+from classroom import classes, paths, reviews, store, submissions
 
 
 def history_note(submission):
@@ -44,18 +49,29 @@ def _history_extra(submission):
 
 
 def detect_submission(engine, lock, submission, detected_by):
-    """Score one submission, log it, record the review, return the review."""
+    """Score one submission, log it, record the review, return the review.
+    Raises MissingText when the text file is gone and FileProblem when a
+    file cannot be written; in both cases nothing was written."""
     text = submissions.read_text(submission)
+    store.check_writable(history.HISTORY_PATH, paths.reviews_path())
     with lock:
         stats = engine.detect(text)
     if stats is None:                         # too short to score at all
         stats = verdict.placeholder_stats(engine.config, engine.device)
-    run_id = history.append_history(stats, source="submission",
-                                    filename="data/" + submission["text_path"],
-                                    extra=_history_extra(submission))
+    with store.file_errors(history.HISTORY_PATH, "write to"):
+        run_id = history.append_history(stats, source="submission",
+                                        filename="data/" + submission["text_path"],
+                                        extra=_history_extra(submission))
     key_id = (stats.get("watermark") or {}).get("key_id") or ""
-    return reviews.record_detection(submission, stats, run_id,
-                                    engine.config.get("model_id", ""), key_id, detected_by)
+    try:
+        return reviews.record_detection(submission, stats, run_id,
+                                        engine.config.get("model_id", ""), key_id, detected_by)
+    except ValueError:
+        try:
+            history.delete_record(run_id)     # keep the pair whole
+        except (OSError, ValueError):
+            pass                              # the log keeps a row; the detector did run
+        raise
 
 
 def pending(assignment_id):
@@ -70,15 +86,30 @@ def pending(assignment_id):
 
 def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event=None):
     """Score several submissions; the same loop shape as experiment.run_batch.
-    cancel_event is checked before each one; on_progress(done, total, review)
-    runs after each. Returns the reviews written."""
-    written = []
+
+    cancel_event is checked before each one; on_progress(done, total,
+    submission, review) runs after each (review is None when it was
+    skipped). A submission whose text is missing is skipped and listed. A
+    file that cannot be written stops the run, because every later one would
+    fail the same way; what was scored before stays scored.
+
+    Returns {"written": [reviews], "skipped": [(submission, reason)],
+    "stopped": reason or None}."""
+    result = {"written": [], "skipped": [], "stopped": None}
     total = len(items)
     for done, submission in enumerate(items, 1):
         if cancel_event is not None and cancel_event.is_set():
             break
-        review = detect_submission(engine, lock, submission, detected_by)
-        written.append(review)
+        review = None
+        try:
+            review = detect_submission(engine, lock, submission, detected_by)
+        except submissions.MissingText as exc:
+            result["skipped"].append((submission, str(exc)))
+        except store.FileProblem as exc:
+            result["stopped"] = str(exc)
+            break
+        else:
+            result["written"].append(review)
         if on_progress:
-            on_progress(done, total, review)
-    return written
+            on_progress(done, total, submission, review)
+    return result

@@ -55,9 +55,6 @@ class Engine:
     def __init__(self, config, progress_callback=None):
         self.config = config
         self.device = _resolve_device(config.get("device", "auto"))
-        wm_cfg = config["watermark"]
-        # detection needs this many tokens before the first one can be scored
-        self.min_tokens = int(wm_cfg["context_width"]) + 1
 
         if progress_callback:
             progress_callback("Loading tokenizer...")
@@ -75,7 +72,16 @@ class Engine:
         if self.device == "cpu":
             self.model = self.model.to("cpu")
         self.model.eval()
+        self._build_watermark()
 
+        if progress_callback:
+            progress_callback("Ready.")
+
+    def _build_watermark(self):
+        """The watermark settings, shared by generate() and the detector."""
+        wm_cfg = self.config["watermark"]
+        # detection needs this many tokens before the first one can be scored
+        self.min_tokens = int(wm_cfg["context_width"]) + 1
         self.watermark_config = WatermarkingConfig(
             greenlist_ratio=wm_cfg["greenlist_ratio"],
             bias=wm_cfg["bias"],
@@ -83,7 +89,6 @@ class Engine:
             context_width=wm_cfg["context_width"],
             hashing_key=wm_cfg["hashing_key"],
         )
-
         self.detector = WatermarkDetector(
             model_config=self.model.config,
             device=str(self.device),
@@ -91,8 +96,17 @@ class Engine:
             ignore_repeated_ngrams=bool(wm_cfg.get("ignore_repeated_ngrams", False)),
         )
 
-        if progress_callback:
-            progress_callback("Ready.")
+    def reconfigure(self, config):
+        """Adopt an edited config (a new key, other thresholds or sampling
+        settings) without reloading the model. Returns False, changing
+        nothing, when the model or the device changed: that needs a new
+        Engine. The caller holds the engine's lock."""
+        if (config["model_id"] != self.config["model_id"]
+                or _resolve_device(config.get("device", "auto")) != self.device):
+            return False
+        self.config = config
+        self._build_watermark()
+        return True
 
     # ---------------------------------------------------------------- generate
     def generate(self, prompt, max_new_tokens=None, watermarked=True,

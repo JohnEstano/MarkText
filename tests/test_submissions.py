@@ -84,3 +84,31 @@ def test_listing(course, people):
     assert len(submissions.list_submissions(a["assignment_id"])) == 2
     assert len(submissions.list_submissions(a["assignment_id"], current_only=False)) == 3
     assert [r["username"] for r in submissions.list_submissions(username="ben")] == ["ben"]
+
+
+def test_a_failed_hand_in_leaves_nothing_behind(course, excel_lock):
+    aid = course["assignment"]["assignment_id"]
+    first = submissions.submit(aid, "alice", "version one " * 20)
+    folder = paths.resolve(first["text_path"]).parent
+    excel_lock(paths.submissions_path())
+    with pytest.raises(ValueError, match="submissions.csv"):
+        submissions.submit(aid, "alice", "version two " * 20)
+    assert sorted(p.name for p in folder.iterdir()) == ["v001.json", "v001.txt"]
+    excel_lock.release(paths.submissions_path())
+    second = submissions.submit(aid, "alice", "version two " * 20)
+    assert second["version"] == "2"
+
+
+def test_the_file_holds_exactly_the_hashed_bytes(course):
+    text = "First line.\nSecond line.\n\nA new paragraph."
+    row = submissions.submit(course["assignment"]["assignment_id"], "alice", text)
+    raw = paths.resolve(row["text_path"]).read_bytes()
+    assert b"\r" not in raw
+    assert hashlib.sha256(raw).hexdigest() == row["sha256"]
+
+
+def test_a_missing_text_file_raises_missing_text(course):
+    row = submissions.submit(course["assignment"]["assignment_id"], "alice", "an essay " * 20)
+    paths.resolve(row["text_path"]).unlink()
+    with pytest.raises(submissions.MissingText, match="missing"):
+        submissions.read_text(row)

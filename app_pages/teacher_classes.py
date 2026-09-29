@@ -27,6 +27,7 @@ def open_class(class_id):
     state["open_class_id"] = class_id
 
 
+@common.safely
 def restore(class_id):
     classes.set_archived(class_id, False, by=teacher)
     common.flash("Class restored.", ":material/unarchive:")
@@ -47,16 +48,19 @@ def import_roster(class_id):
         len(result["enrolled"]), len(result["invited"]), len(result["skipped"])), ":material/group_add:")
 
 
+@common.safely
 def export_roster(class_id):
     path = classes.export_roster(class_id)
     common.flash("Roster saved to {}.".format(common.data_label(path)), ":material/download:")
 
 
+@common.safely
 def export_summary(class_id):
     path = reports.export_class_summary(class_id)
     common.flash("Summary saved to {}.".format(common.data_label(path)), ":material/download:")
 
 
+@common.safely
 def set_status(assignment_id, status):
     assignments.update_assignment(assignment_id, by=teacher, status=status)
     common.flash("Assignment {}.".format("closed" if status == "closed" else "reopened"),

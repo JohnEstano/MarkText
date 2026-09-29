@@ -23,8 +23,7 @@ latest = reviews.latest_by_submission()
 
 rows = []
 for sub in mine:
-    review = latest.get(sub["submission_id"])
-    returned = bool(review and review["returned"] == "1")
+    shown = reviews.shown_to_student(latest.get(sub["submission_id"]))
     rows.append({
         "submission_id": sub["submission_id"],
         "Assignment": tasks.get(sub["assignment_id"], {}).get("title", sub["assignment_id"]),
@@ -34,7 +33,7 @@ for sub in mine:
         "How": SOURCE_TEXT.get(sub["source"], sub["source"]),
         "Words": int(sub["words"]),
         "Latest": sub["status"] == "current",
-        "Teacher's decision": common.decision_text(review["decision"]) if returned else "",
+        "Teacher's decision": common.decision_text(shown["decision"]) if shown else "",
     })
 table = pd.DataFrame(rows)
 
@@ -48,15 +47,17 @@ with st.container(border=True):
 with st.container(border=True):
     labels = {r["submission_id"]: "{} · version {} · {}".format(r["Assignment"], r["Version"], r["Handed in"])
               for r in rows}
-    chosen = common.choose("Open a submission", list(labels), "open_submission_id", labels.get)
+    where = {r["submission_id"]: r["Class"] for r in rows}
+    chosen = common.choose("Open a submission", list(labels), "open_submission_id", labels.get,
+                           detail=where.get)
     sub = submissions.get_submission(chosen)
-    review = latest.get(chosen)
-    if review and review["returned"] == "1":
+    shown = reviews.shown_to_student(latest.get(chosen))
+    if shown:
         with st.container(horizontal=True, vertical_alignment="center"):
             st.markdown("**Your teacher's decision**")
-            common.decision_badge(review["decision"])
-        if review["note"]:
-            st.markdown(common.plain(review["note"]))
+            common.decision_badge(shown["decision"])
+        if shown["note"]:
+            st.markdown(common.plain(shown["note"]))
     elif sub["status"] == "current":
         st.caption("Your teacher has not returned this version yet.")
     else:
@@ -64,4 +65,6 @@ with st.container(border=True):
     if sub["version_note"]:
         st.caption("Your note: {}".format(sub["version_note"]))
     with st.container(height=300, border=True):
-        st.markdown(common.plain(submissions.read_text(sub)))
+        text = common.submission_text(sub)
+        if text is not None:
+            st.markdown(common.plain(text))

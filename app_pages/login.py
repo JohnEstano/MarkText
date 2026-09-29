@@ -2,7 +2,9 @@
 
 Reads and writes data/users.json through classroom.accounts: passwords are
 hashed there, never stored. A student who registers with a class code is
-enrolled right away; an invitation from an imported roster is accepted too.
+enrolled right away; an invitation from an imported roster is accepted at
+registration and again at every sign-in, so one that could not be written
+the first time (rosters.csv open in Excel) is not lost.
 """
 
 import streamlit as st
@@ -13,10 +15,20 @@ from ui import common
 state = st.session_state
 
 
-def _enter(user, message):
+def _enter(user, message, weak=False):
     common.sign_in(user)
+    state["weak_password"] = weak
     common.flash(message, ":material/waving_hand:")
     st.rerun()
+
+
+def _claim(username):
+    """Accept waiting invitations; a file that cannot be written just now is
+    retried at the next sign-in."""
+    try:
+        return classes.claim_invites(username)
+    except ValueError:
+        return []
 
 
 _, middle, _ = st.columns([1, 1.25, 1])
@@ -67,7 +79,12 @@ with middle:
                 if user is None:
                     st.error("That username and password do not match.", icon=":material/error:")
                 else:
-                    _enter(user, "Signed in as {}.".format(user["display_name"]))
+                    joined = _claim(user["username"]) if user["role"] == "student" else []
+                    message = "Signed in as {}.".format(user["display_name"])
+                    if joined:
+                        message += " Your teacher added you to {} class{}.".format(
+                            len(joined), "" if len(joined) == 1 else "es")
+                    _enter(user, message, weak=accounts.is_weak(password, user["username"]))
         else:
             st.caption("Students register here. Teachers get their account from the classroom's "
                        "administrator.")
@@ -92,7 +109,7 @@ with middle:
                 except ValueError as exc:
                     st.error(str(exc), icon=":material/error:")
                 else:
-                    joined = classes.claim_invites(user["username"])
+                    joined = _claim(user["username"])
                     message = "Account created."
                     if code.strip():
                         try:

@@ -25,11 +25,13 @@ NUMERIC = ("version", "words", "tokens_scored", "green_pct", "z_score")
 
 
 def _state(row):
+    """A returned review whose decision changed afterwards counts as decided:
+    it is waiting to be returned again."""
     if not row["submission_id"]:
         return "not submitted"
     if not row["review_id"]:
         return "awaiting detection"
-    if row["returned"] == "1":
+    if row["returned"] == "1" and not reviews.changed_since_return(row):
         return "returned"
     if row["decision"] and row["decision"] != "pending":
         return "decided"
@@ -52,14 +54,15 @@ def assignment_frame(assignment_id):
     revs = pd.DataFrame(list(reviews.latest_by_submission(assignment_id).values()),
                         columns=reviews.COLUMNS)[
         ["submission_id", "review_id", "tokens_scored", "green_pct", "z_score", "label",
-         "decision", "note", "returned", "returned_at", "detected_at"]]
+         "decision", "note", "returned", "returned_at", "detected_at", "returned_decision",
+         "returned_note"]]
 
     df = roster.merge(subs, on="username", how="left").fillna("")
     df = df.merge(revs, on="submission_id", how="left").fillna("")
     df["state"] = df.apply(_state, axis=1) if len(df) else pd.Series(dtype=str)
     for col in NUMERIC:
         df[col] = pd.to_numeric(df[col], errors="coerce")
-    df["returned"] = df["returned"] == "1"
+    df["returned"] = df["state"] == "returned"
     return df[FRAME_COLUMNS].sort_values("display_name", key=lambda s: s.str.lower()).reset_index(drop=True)
 
 
@@ -94,10 +97,7 @@ def class_summary(class_id):
 
 
 def _moment(timestamp):
-    try:
-        return datetime.datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError):
-        return None
+    return store.parse_time(timestamp)
 
 
 def recent(timestamp, days=7, now=None):
@@ -119,10 +119,9 @@ def daily_counts(timestamps, days=14, now=None):
 
 
 def due_soon(due_at, days=7, today=None):
-    """True when an ISO due date falls between today and `days` days from now."""
-    try:
-        due = datetime.date.fromisoformat(due_at)
-    except (TypeError, ValueError):
+    """True when a due date falls between today and `days` days from now."""
+    due = store.parse_date(due_at)
+    if due is None:
         return False
     today = today or datetime.date.today()
     return today <= due <= today + datetime.timedelta(days=days)
@@ -191,18 +190,17 @@ def student_overview(username):
     rows = []
     for task in assignments.for_student(username):
         sub = submissions.current_submission(task["assignment_id"], username)
-        review = reviews.latest_review(sub["submission_id"]) if sub else None
-        returned = bool(review and review["returned"] == "1")
+        shown = reviews.shown_to_student(reviews.latest_review(sub["submission_id"])) if sub else None
         rows.append({
             "assignment_id": task["assignment_id"], "title": task["title"],
             "class_name": class_names.get(task["class_id"], ""), "due_at": task["due_at"],
             "status": task["status"],
-            "my_state": "returned" if returned else ("submitted" if sub else "not submitted"),
+            "my_state": "returned" if shown else ("submitted" if sub else "not submitted"),
             "version": int(sub["version"]) if sub else None,
             "submitted_at": sub["submitted_at"] if sub else "",
-            "decision": review["decision"] if returned else "",
-            "note": review["note"] if returned else "",
-            "returned_at": review["returned_at"] if returned else "",
+            "decision": shown["decision"] if shown else "",
+            "note": shown["note"] if shown else "",
+            "returned_at": shown["returned_at"] if shown else "",
         })
     return rows
 

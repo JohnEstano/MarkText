@@ -6,8 +6,10 @@ survive a rerun is kept in st.session_state (one per browser tab); the
 model is kept in st.cache_resource (one per server process).
 """
 
+import collections
 import copy
-import datetime
+import functools
+import logging
 import re
 import threading
 
@@ -15,7 +17,9 @@ import streamlit as st
 
 import config as cfg
 import verdict
-from classroom import accounts, paths, reports, reviews
+from classroom import accounts, paths, reports, reviews, store, submissions
+
+log = logging.getLogger("marktext")
 
 # ------------------------------------------------------------------ state
 DEFAULTS = {
@@ -24,7 +28,9 @@ DEFAULTS = {
     "flash": [],                # (message, icon) toasts to show on the next run
     "goto": None,               # page to switch to on the next run
     "page_seen": None,          # url path of the page shown last run
-    "config_notes": [],
+    "config_notes": [],         # what the config loader reported this session
+    "notes_dismissed": [],
+    "weak_password": False,     # signed in with a password that should be changed
     "open_class_id": None,      # Classes page: the class that is open
     "open_assignment_id": None, # student Assignment page
     "review_class": None,       # Review page selectors
@@ -41,12 +47,24 @@ def init_state():
 
 
 def load_config():
-    """The validated config; its notes (created, key added, public key) are
-    kept for the teacher's pages. ValueError propagates to app.py."""
+    """The validated config. What the loader reports (a config created, a key
+    generated, the public key in use) is added to this session's notes, so a
+    note from the first run of the session is still there on later runs.
+    ValueError propagates to app.py."""
     notes = []
     config = cfg.load_config(notes=notes)
-    st.session_state["config_notes"] = notes
+    kept = st.session_state.setdefault("config_notes", [])
+    dismissed = st.session_state.get("notes_dismissed", [])
+    for note in notes:
+        if note not in kept and note not in dismissed:
+            kept.append(note)
     return config
+
+
+def dismiss_notes():
+    state = st.session_state
+    state["notes_dismissed"] = state.get("notes_dismissed", []) + state.get("config_notes", [])
+    state["config_notes"] = []
 
 
 # ------------------------------------------------------------------ model
@@ -70,8 +88,19 @@ def get_engine():
 
 
 def engine():
-    """(engine, lock), loading the model on first use."""
-    return get_engine()
+    """(engine, lock), loading the model on first use. A config edited since
+    the model loaded (a new key, other thresholds) is adopted first, so a
+    score always uses the key the pages name; a new model id or device
+    loads a new engine."""
+    eng, lock = get_engine()
+    config = cfg.load_config()
+    if config != eng.config:
+        with lock:
+            adopted = config == eng.config or eng.reconfigure(config)
+        if not adopted:
+            get_engine.clear()
+            eng, lock = get_engine()
+    return eng, lock
 
 
 # ------------------------------------------------------------------ people
@@ -169,12 +198,41 @@ def open_assignment(assignment_id):
     go("app_pages/student_assignment.py")
 
 
-def choose(label, options, state_key, format_func=str, **kwargs):
+def unique_labels(options, format_func=str, detail=None):
+    """option -> label, no two alike. A select box sends back the label that
+    was picked and Streamlit maps it to the last option with that label, so
+    of two students both called "Alice Santos" the first could never be
+    opened. Labels shared by several options get detail(option) added, then
+    a number when that is still not enough."""
+    labels = {o: str(format_func(o)) for o in options}
+    if detail is not None:
+        shared = collections.Counter(labels.values())
+        for o in options:
+            if shared[labels[o]] > 1:
+                labels[o] = "{} · {}".format(labels[o], detail(o))
+    taken = set(labels.values())
+    used = set()
+    for o in options:
+        label = labels[o]
+        if label in used:
+            n = 2
+            while "{} ({})".format(label, n) in taken:
+                n += 1
+            label = "{} ({})".format(label, n)
+            taken.add(label)
+        used.add(label)
+        labels[o] = label
+    return labels
+
+
+def choose(label, options, state_key, format_func=str, detail=None, **kwargs):
     """A selectbox whose choice lives in st.session_state[state_key], which
     other pages may set (a widget's own key is dropped when its page is not
-    shown). Returns the chosen option; `options` must not be empty."""
+    shown). Labels are made unique (unique_labels, with `detail`). Returns
+    the chosen option; `options` must not be empty."""
     state = st.session_state
     widget_key = "_pick_" + state_key
+    labels = unique_labels(options, format_func, detail)
     current = state.get(state_key)
     if current not in options:
         current = options[0]
@@ -186,7 +244,8 @@ def choose(label, options, state_key, format_func=str, **kwargs):
 
     def sync():
         state[state_key] = state[widget_key]
-    st.selectbox(label, options, format_func=format_func, key=widget_key, on_change=sync, **kwargs)
+    st.selectbox(label, options, format_func=lambda o: labels.get(o, str(o)), key=widget_key,
+                 on_change=sync, **kwargs)
     return current
 
 
@@ -230,6 +289,30 @@ def finish_dialog(message=None, icon=":material/check_circle:"):
 # ------------------------------------------------------------------ flash
 def flash(message, icon=":material/check_circle:"):
     st.session_state.setdefault("flash", []).append((message, icon))
+
+
+def safely(action):
+    """Wrap a button callback: a ValueError (a broken rule, or a data file
+    that is open in another program) becomes a message on the next run
+    instead of an exception on the page."""
+    @functools.wraps(action)
+    def run(*args, **kwargs):
+        try:
+            return action(*args, **kwargs)
+        except ValueError as exc:
+            flash(str(exc), ":material/error:")
+    return run
+
+
+def problem(exc):
+    """What app.py shows when a page stops on a ValueError or an OSError (a
+    data file that is damaged, missing or locked). The traceback goes to
+    the server's log, not to the browser."""
+    log.exception("page stopped")
+    st.error(str(exc) if isinstance(exc, ValueError) else
+             "A file could not be read or written: {}".format(exc), icon=":material/error:")
+    st.caption("Nothing was changed. Close the file if another program has it open, or restore "
+               "it from data/backups, then reload the page.")
 
 
 def show_flash():
@@ -318,20 +401,29 @@ def plain(text):
 
 
 def when(timestamp):
-    """'2026-09-29 14:05:12' -> 'Sep 29, 14:05'."""
-    try:
-        moment = datetime.datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-    except (TypeError, ValueError):
+    """'2026-09-29 14:05:12' -> 'Sep 29, 14:05'. An unreadable value shows as it is."""
+    moment = store.parse_time(timestamp)
+    if moment is None:
         return timestamp or ""
     return moment.strftime("%b %d, %H:%M").replace(" 0", " ")
 
 
 def day(iso_date):
-    """'2026-10-15' -> 'Oct 15, 2026'."""
-    try:
-        return datetime.date.fromisoformat(iso_date).strftime("%b %d, %Y").replace(" 0", " ")
-    except (TypeError, ValueError):
+    """'2026-10-15' -> 'Oct 15, 2026'. An unreadable value shows as it is."""
+    date = store.parse_date(iso_date)
+    if date is None:
         return iso_date or ""
+    return date.strftime("%b %d, %Y").replace(" 0", " ")
+
+
+def submission_text(sub):
+    """The text of a submission, or None after a warning on the page when its
+    file is missing or cannot be read."""
+    try:
+        return submissions.read_text(sub)
+    except ValueError as exc:
+        st.warning(str(exc), icon=":material/warning:")
+        return None
 
 
 # ------------------------------------------------------------------ files

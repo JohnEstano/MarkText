@@ -4,23 +4,28 @@
     python -m classroom.seed_demo --no-model   # quick: four essays, nothing scored
     python -m classroom.seed_demo --reset      # move data/ aside first (renamed, never deleted)
     python -m classroom.seed_demo --teacher nash   # give the class to an existing teacher
+    python -m classroom.seed_demo --password "..."  # choose the demo accounts' password
 
-Creates the teacher prof and five students (password DEMO_PASSWORD), the
-class "Intro to writing" with its roster imported from a list, one
-assignment, four essays written by people (classroom/demo_texts/), and,
-when a model is available, one essay drafted with the assistant. Then it
-scores every submission, so the teacher opens a review page with real
-results: the drafted essay flagged, the four human essays not.
+Creates the teacher prof and five students, the class "Intro to writing"
+with its roster imported from a list, one assignment, four essays written by
+people (classroom/demo_texts/), and, when a model is available, one essay
+drafted with the assistant. Then it scores every submission, so the teacher
+opens a review page with real results: the drafted essay flagged, the four
+human essays not.
+
+The demo accounts get the password given with --password (or in the app's
+dialog), or a random one that is printed once. No password is written in
+this file: a password in public source code is everyone's password.
 """
 
 import argparse
 import datetime
 import pathlib
+import secrets
 import threading
 
 from classroom import accounts, assignments, assistant, classes, detection, paths, store, submissions
 
-DEMO_PASSWORD = "marktext-demo"
 TEACHER = ("prof", "Prof. Reyes")
 STUDENTS = (("alice", "Alice Santos"), ("ben", "Ben Okafor"), ("chloe", "Chloe Tan"),
             ("dan", "Dan Villanueva"), ("eva", "Eva Lindqvist"))
@@ -47,31 +52,40 @@ def archive_data():
     return target
 
 
-def _account(username, display_name, role):
+def new_password():
+    """A random demo password: three groups of four, easy to read aloud."""
+    alphabet = classes.CODE_ALPHABET.lower()
+    return "-".join("".join(secrets.choice(alphabet) for _ in range(4)) for _ in range(3))
+
+
+def _account(username, display_name, role, password):
     user = accounts.get_user(username)
     if user is None:
-        return accounts.register(username, DEMO_PASSWORD, role, display_name), True
+        return accounts.register(username, password, role, display_name), True
     if user["role"] != role:
         raise ValueError("{} already exists as a {} account.".format(username, user["role"]))
     return user, False
 
 
-def seed(teacher=None, engine=None, lock=None, detect=True, on_step=None):
+def seed(teacher=None, engine=None, lock=None, detect=True, on_step=None, password=None):
     """Build the demo class. `teacher` is an existing teacher's username, or
-    None to create prof. Without an engine there is no assistant draft and
-    nothing is scored. Returns a summary dict."""
+    None to create prof. Accounts that do not exist yet get `password` (a
+    random one when None; the summary returns it). Without an engine there
+    is no assistant draft and nothing is scored. Returns a summary dict."""
     step = on_step or (lambda message: None)
+    password = password or new_password()
+    accounts.validate_password(password)
     paths.ensure_dirs()
     created = []
     if teacher is None:
-        user, new = _account(*TEACHER, "teacher")
+        user, new = _account(*TEACHER, "teacher", password)
         teacher = user["username"]
         if new:
             created.append(teacher)
     elif (accounts.get_user(teacher) or {}).get("role") != "teacher":
         raise ValueError("{} is not a teacher account.".format(teacher))
     for username, name in STUDENTS:
-        _, new = _account(username, name, "student")
+        _, new = _account(username, name, "student", password)
         if new:
             created.append(username)
     step("Accounts ready")
@@ -99,12 +113,16 @@ def seed(teacher=None, engine=None, lock=None, detect=True, on_step=None):
 
     scored = []
     if engine is not None and detect:
-        scored = detection.detect_many(engine, lock, detection.pending(task["assignment_id"]), teacher)
+        run = detection.detect_many(engine, lock, detection.pending(task["assignment_id"]), teacher)
+        if run["stopped"]:
+            raise ValueError(run["stopped"])
+        scored = run["written"]
         step("Every submission scored")
     return {"teacher": teacher, "accounts_created": created, "class_id": cls["class_id"],
             "class_name": cls["name"], "join_code": classes.format_code(cls["join_code"]),
             "assignment_id": task["assignment_id"], "enrolled": roster["enrolled"],
-            "drafted": drafted, "scored": len(scored)}
+            "drafted": drafted, "scored": len(scored),
+            "password": password if created else None}
 
 
 def main(argv=None):
@@ -115,6 +133,9 @@ def main(argv=None):
                         help="skip the assistant draft and scoring (no model load)")
     parser.add_argument("--no-detect", action="store_true", help="draft, but do not score")
     parser.add_argument("--teacher", default=None, help="an existing teacher who will own the class")
+    parser.add_argument("--password", default=None,
+                        help="password for the demo accounts this creates (default: a random one, "
+                             "printed at the end)")
     args = parser.parse_args(argv)
 
     if args.reset:
@@ -127,7 +148,8 @@ def main(argv=None):
         print("Loading the model...")
         engine, lock = Engine(cfg.load_config(), progress_callback=print), threading.Lock()
     try:
-        summary = seed(args.teacher, engine, lock, detect=not args.no_detect, on_step=print)
+        summary = seed(args.teacher, engine, lock, detect=not args.no_detect, on_step=print,
+                       password=args.password)
     except ValueError as exc:
         print(exc)
         return 1
@@ -135,7 +157,8 @@ def main(argv=None):
                                                   summary["join_code"]))
     print("Teacher: {}   Students: {}".format(summary["teacher"], ", ".join(u for u, _ in STUDENTS)))
     if summary["accounts_created"]:
-        print("New accounts use the password: {}".format(DEMO_PASSWORD))
+        print("New accounts ({}) use the password: {}".format(", ".join(summary["accounts_created"]),
+                                                             summary["password"]))
     print("Assistant draft: {}   Submissions scored: {}".format(
         "yes" if summary["drafted"] else "no", summary["scored"]))
     return 0

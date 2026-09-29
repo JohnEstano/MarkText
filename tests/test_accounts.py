@@ -98,3 +98,31 @@ def test_cli_create_teacher_list_and_reset(data_dir, monkeypatch, capsys):
     answers = iter(["newpassword", "newpassword"])
     assert cli.main(["reset-password", "reyes"]) == 0
     assert accounts.authenticate("reyes", "newpassword")
+
+
+@pytest.mark.parametrize("password, username, problem", [
+    ("short", "", "at least"),
+    ("password123", "", "common"),
+    ("marktext-demo", "", "common"),               # the demo password older versions printed
+    ("alice.santos-2026", "alice.santos", "username"),
+    ("aaaaaaaaab", "", "four different"),
+    ("correct horse battery", "alice", None),
+])
+def test_password_rules(password, username, problem):
+    found = accounts.password_problem(password, username)
+    assert (found is None) if problem is None else (problem in found)
+
+
+def test_weak_passwords_are_refused_for_new_accounts_and_changes(data_dir):
+    with pytest.raises(ValueError, match="common"):
+        accounts.register("carol", "iloveyou1", "student")
+    accounts.register("carol", "studentpass", "student")
+    with pytest.raises(ValueError, match="username"):
+        accounts.reset_password("carol", "carol-2026-x")
+
+
+def test_sign_in_works_while_users_json_is_open_elsewhere(data_dir, excel_lock):
+    accounts.register("carol", "studentpass", "student")
+    excel_lock(paths.users_path())
+    user = accounts.authenticate("carol", "studentpass")
+    assert user["username"] == "carol" and user["last_login"] == ""

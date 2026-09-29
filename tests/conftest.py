@@ -43,3 +43,39 @@ def course(people):
     task = assignments.create_assignment(cls["class_id"], "Why people keep diaries",
                                          "About 200 words.", "2026-10-15", "prof")
     return {"class": cls, "assignment": task}
+
+
+def _file_key(file):
+    try:
+        return str(pathlib.Path(file).resolve()).lower()
+    except TypeError:                    # a file descriptor, not a path
+        return None
+
+
+@pytest.fixture
+def excel_lock(monkeypatch):
+    """Make files behave as they do on Windows while Excel has them open:
+    reading works, but opening one for writing or replacing it raises
+    PermissionError. Call excel_lock(path) to lock, excel_lock.release(path)
+    to close it again."""
+    import builtins
+    import os
+    locked = set()
+    real_open, real_replace = builtins.open, os.replace
+
+    def fake_open(file, mode="r", *args, **kwargs):
+        if any(m in mode for m in "wax+") and _file_key(file) in locked:
+            raise PermissionError(13, "Permission denied", str(file))
+        return real_open(file, mode, *args, **kwargs)
+
+    def fake_replace(src, dst, *args, **kwargs):
+        if _file_key(dst) in locked:
+            raise PermissionError(13, "Access is denied", str(dst))
+        return real_replace(src, dst, *args, **kwargs)
+    monkeypatch.setattr(builtins, "open", fake_open)
+    monkeypatch.setattr(os, "replace", fake_replace)
+
+    def lock(path):
+        locked.add(_file_key(path))
+    lock.release = lambda path: locked.discard(_file_key(path))
+    return lock

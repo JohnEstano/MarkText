@@ -67,9 +67,13 @@ def rotate_code(class_id, teacher):
     if cancel:
         common.finish_dialog()
     if confirm:
-        code = classes.rotate_join_code(class_id, by=teacher)
-        common.finish_dialog("The new join code is {}.".format(classes.format_code(code)),
-                             ":material/key:")
+        try:
+            code = classes.rotate_join_code(class_id, by=teacher)
+        except ValueError as exc:
+            st.error(str(exc), icon=":material/error:")
+        else:
+            common.finish_dialog("The new join code is {}.".format(classes.format_code(code)),
+                                 ":material/key:")
 
 
 @st.dialog("Archive this class?", icon=":material/archive:", on_dismiss=common.close_dialog)
@@ -81,9 +85,13 @@ def archive_class(class_id, teacher):
     if cancel:
         common.finish_dialog()
     if confirm:
-        classes.set_archived(class_id, True, by=teacher)
-        st.session_state["open_class_id"] = None
-        common.finish_dialog("Class archived.", ":material/archive:")
+        try:
+            classes.set_archived(class_id, True, by=teacher)
+        except ValueError as exc:
+            st.error(str(exc), icon=":material/error:")
+        else:
+            st.session_state["open_class_id"] = None
+            common.finish_dialog("Class archived.", ":material/archive:")
 
 
 @st.dialog("Remove this student?", icon=":material/person_remove:", on_dismiss=common.close_dialog)
@@ -111,6 +119,10 @@ def return_work(review_id, teacher):
     st.write("**{}** will see your decision, **{}**, and your note. The detector's numbers stay "
              "on your side.".format(common.display_name(review["username"]),
                                     common.decision_text(review["decision"])))
+    shown = reviews.shown_to_student(review)
+    if shown:
+        st.caption("This replaces what they see now: {}, returned {}.".format(
+            common.decision_text(shown["decision"]), common.when(shown["returned_at"])))
     with st.form("return_work", border=False):
         cancel, confirm = _buttons("return_cancel", "Return", "return_confirm")
     if cancel:
