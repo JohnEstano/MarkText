@@ -41,3 +41,11 @@ Thumbs.db
 *.env.local
 # History-tab exports and backups (web front-end)
 logs/exports/
+
+# Classroom data: accounts, classes, submissions, reviews (created at run time)
+data/*
+!data/.gitkeep
+data.archived_*/
+
+# Streamlit secrets (only needed for OIDC sign-in, not used yet)
+.streamlit/secrets.toml

@@ -1,0 +1,100 @@
+import json
+
+import pytest
+
+from classroom import accounts, cli, paths
+
+
+def test_hash_format_and_verify():
+    stored = accounts.hash_password("correct horse", iterations=1000)
+    algorithm, iterations, salt, digest = stored.split("$")
+    assert algorithm == "pbkdf2_sha256" and iterations == "1000"
+    assert len(salt) == 32 and len(digest) == 64
+    assert accounts.verify_password("correct horse", stored)
+    assert not accounts.verify_password("wrong horse", stored)
+    assert not accounts.verify_password("x", "garbage")
+    assert accounts.hash_password("same", iterations=1000) != accounts.hash_password("same", iterations=1000)
+
+
+def test_register_normalises_and_never_stores_the_password(data_dir):
+    user = accounts.register("  Alice ", "s3cret-pass", "student", "Alice  Santos")
+    assert user == {"username": "alice", "display_name": "Alice Santos", "role": "student",
+                    "created_at": user["created_at"], "last_login": ""}
+    raw = paths.users_path().read_text(encoding="utf-8")
+    assert "s3cret-pass" not in raw
+    assert json.loads(raw)["users"]["alice"]["password"].startswith("pbkdf2_sha256$1000$")
+
+
+@pytest.mark.parametrize("username, password, role", [
+    ("al", "longenough", "student"),          # too short
+    ("al ice", "longenough", "student"),      # space
+    ("-alice", "longenough", "student"),      # bad first character
+    ("alice", "short", "student"),            # weak password
+    ("alice", "longenough", "admin"),         # unknown role
+])
+def test_register_rejects_bad_input(data_dir, username, password, role):
+    with pytest.raises(ValueError):
+        accounts.register(username, password, role)
+    assert not accounts.exists("alice")
+
+
+def test_duplicate_username_is_refused(data_dir):
+    accounts.register("alice", "longenough", "student")
+    with pytest.raises(ValueError, match="taken"):
+        accounts.register("ALICE", "otherpassword", "student")
+
+
+def test_authenticate(data_dir):
+    accounts.register("prof", "teacherpass", "teacher", "Prof. Reyes")
+    assert accounts.authenticate("prof", "nope") is None
+    assert accounts.authenticate("nobody", "teacherpass") is None
+    user = accounts.authenticate("PROF", "teacherpass")
+    assert user["role"] == "teacher" and "password" not in user
+    assert accounts.get_user("prof")["last_login"] != ""
+
+
+def test_has_teacher_and_listing(data_dir):
+    assert not accounts.has_teacher()
+    accounts.register("alice", "longenough", "student", "Alice Santos")
+    assert not accounts.has_teacher()
+    accounts.register("prof", "teacherpass", "teacher")
+    assert accounts.has_teacher()
+    assert [u["username"] for u in accounts.list_users("student")] == ["alice"]
+    assert accounts.display_names() == {"alice": "Alice Santos", "prof": "prof"}
+
+
+def test_change_password(data_dir):
+    accounts.register("alice", "longenough", "student")
+    with pytest.raises(ValueError, match="not correct"):
+        accounts.change_password("alice", "wrong", "brandnewpass")
+    with pytest.raises(ValueError, match="at least"):
+        accounts.change_password("alice", "longenough", "short")
+    accounts.change_password("alice", "longenough", "brandnewpass")
+    assert accounts.authenticate("alice", "brandnewpass")
+    assert accounts.authenticate("alice", "longenough") is None
+
+
+def test_rename(data_dir):
+    accounts.register("alice", "longenough", "student")
+    assert accounts.rename("alice", " Alice   S. ")["display_name"] == "Alice S."
+    with pytest.raises(ValueError):
+        accounts.rename("alice", "   ")
+
+
+def test_cli_create_teacher_list_and_reset(data_dir, monkeypatch, capsys):
+    answers = iter(["teacherpass", "teacherpass"])
+    monkeypatch.setattr(cli.getpass, "getpass", lambda prompt="": next(answers))
+    assert cli.main(["create-teacher", "Reyes", "--display-name", "Prof. Reyes"]) == 0
+    assert accounts.get_user("reyes")["role"] == "teacher"
+
+    answers = iter(["abcdefgh", "different"])
+    assert cli.main(["create-teacher", "other"]) == 1          # passwords do not match
+    assert "do not match" in capsys.readouterr().err
+
+    assert cli.main(["list-users"]) == 0
+    assert "reyes" in capsys.readouterr().out
+
+    assert cli.main(["reset-password", "ghost"]) == 1
+    answers = iter(["newpassword", "newpassword"])
+    assert cli.main(["reset-password", "reyes"]) == 0
+    assert accounts.authenticate("reyes", "newpassword")
