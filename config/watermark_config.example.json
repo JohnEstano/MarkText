@@ -13,9 +13,14 @@
         "seeding_scheme": "selfhash",
         "context_width": 5,
         "hashing_key": null,
+        "key_id": null,
         "ignore_repeated_ngrams": false
     },
     "detection_threshold": 4.0,
     "possible_threshold": 2.0,
-    "min_tokens_for_verdict": 100
+    "min_tokens_for_verdict": 100,
+    "classroom": {
+        "assistant_enabled": true,
+        "assistant_max_tokens": 300
+    }
 }

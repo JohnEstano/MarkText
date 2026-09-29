@@ -24,7 +24,7 @@ EXPORT_DIR = BASE_DIR / "logs" / "exports"
 COLUMNS = [
     "run_id",
     "timestamp",
-    "source",          # manual | file | batch | legacy
+    "source",          # manual | file | batch | legacy | submission
     "filename",
     "mode",            # normal | watermarked, when known
     "batch_id",
@@ -53,7 +53,9 @@ LEGACY_LABELS = {"NO WATERMARK": "NOT DETECTED"}
 # the only fields a user may change after the fact
 EDITABLE = ("note", "filename")
 
-SOURCES = ("manual", "file", "batch", "legacy")
+# "submission": a classroom detection; its note holds the class, assignment,
+# submission and student ids as JSON (classroom/detection.py)
+SOURCES = ("manual", "file", "batch", "legacy", "submission")
 
 
 def _stamp():

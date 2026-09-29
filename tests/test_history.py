@@ -117,3 +117,10 @@ def test_read_raises_on_bad_csv(hist):
     hist.HISTORY_PATH.write_bytes(b"\xff\xfe not text")
     with pytest.raises((csv.Error, OSError, UnicodeDecodeError)):
         hist.read_history()
+
+
+def test_submission_is_a_known_source(hist):
+    assert "submission" in hist.SOURCES
+    rid = hist.append_history(STATS, source="submission", filename="data/submissions/x/v001.txt",
+                              extra={"note": '{"submission_id": "sub_1"}'})
+    assert hist.find_record(rid)["source"] == "submission"

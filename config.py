@@ -7,12 +7,18 @@ on first run, with a newly generated private hashing key.
 load_config() merges the file over DEFAULT_CONFIG, validates the result,
 and can report what it had to do (backup a corrupt file, generate a key,
 warn about the public default key) through an optional `notes` list.
+
+The hashing key is the one secret in this file. public_watermark() and
+redacted() are the only ways config data should leave the machine (sidecar
+files, reports, the About page). key_id is a random public label for the
+current key, so a review can say which key scored it without revealing it.
 """
 
 import copy
 import datetime
 import json
 import pathlib
+import re
 import secrets
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
@@ -38,11 +44,19 @@ DEFAULT_CONFIG = {
         "seeding_scheme": "selfhash",
         "context_width": 5,
         "hashing_key": None,
+        # random public label of the key above; regenerated with the key
+        "key_id": None,
         "ignore_repeated_ngrams": False,
     },
     "detection_threshold": 4.0,
     "possible_threshold": 2.0,
     "min_tokens_for_verdict": 100,
+    # the classroom system (classroom/ package, app_pages/)
+    "classroom": {
+        # the student's "Draft with the assistant" box; false hides it
+        "assistant_enabled": True,
+        "assistant_max_tokens": 300,
+    },
 }
 
 CONFIG_DIR = BASE_DIR / "config"
@@ -50,6 +64,10 @@ CONFIG_PATH = CONFIG_DIR / "watermark_config.json"
 
 VALID_DEVICES = ("auto", "cpu", "cuda", "gpu")
 VALID_SCHEMES = ("selfhash", "lefthash")
+
+# watermark fields a reader needs to interpret a score; never the key
+PUBLIC_WATERMARK_KEYS = ("greenlist_ratio", "bias", "seeding_scheme", "context_width", "key_id")
+KEY_ID_PATTERN = re.compile(r"[0-9a-f]{8}")
 
 
 def _deep_merge(base, override):
@@ -65,6 +83,27 @@ def _deep_merge(base, override):
 def new_hashing_key():
     """A random 31-bit key, the same size as the public default."""
     return secrets.randbits(31) | 1
+
+
+def new_key_id():
+    """A random public label for a key. Deliberately not derived from the
+    key: a 31-bit key could be recovered from any hash of it by trying all
+    two billion values."""
+    return secrets.token_hex(4)
+
+
+def public_watermark(config):
+    """The watermark parameters that may be written to files or shown."""
+    wm = config["watermark"]
+    return {k: wm.get(k) for k in PUBLIC_WATERMARK_KEYS}
+
+
+def redacted(config):
+    """A copy of the config that is safe to display: the key is hidden."""
+    shown = copy.deepcopy(config)
+    if "hashing_key" in shown.get("watermark", {}):
+        shown["watermark"]["hashing_key"] = "(hidden)"
+    return shown
 
 
 def validate_config(config):
@@ -98,6 +137,9 @@ def validate_config(config):
     key = wm.get("hashing_key")
     need(key is None or (isinstance(key, int) and key > 0),
          "watermark.hashing_key must be a positive integer or null")
+    key_id = wm.get("key_id")
+    need(key_id is None or (isinstance(key_id, str) and KEY_ID_PATTERN.fullmatch(key_id)),
+         "watermark.key_id must be 8 lowercase hex characters or null")
     need(isinstance(wm.get("ignore_repeated_ngrams"), bool),
          "watermark.ignore_repeated_ngrams must be true or false")
 
@@ -107,6 +149,14 @@ def validate_config(config):
     need(isinstance(config.get("min_tokens_for_verdict"), int)
          and config["min_tokens_for_verdict"] >= 0,
          "min_tokens_for_verdict must be a non-negative integer")
+
+    room = config.get("classroom")
+    need(isinstance(room, dict), "classroom must be an object")
+    need(isinstance(room.get("assistant_enabled"), bool),
+         "classroom.assistant_enabled must be true or false")
+    tokens = room.get("assistant_max_tokens")
+    need(isinstance(tokens, int) and not isinstance(tokens, bool) and 50 <= tokens <= 2000,
+         "classroom.assistant_max_tokens must be an integer from 50 to 2000")
 
 
 def load_config(path=None, notes=None):
@@ -134,14 +184,21 @@ def load_config(path=None, notes=None):
         return config
 
     config = _deep_merge(DEFAULT_CONFIG, user)
-    if config["watermark"].get("hashing_key") is None:
-        config["watermark"]["hashing_key"] = new_hashing_key()
-        validate_config(config)
+    wm = config["watermark"]
+    changed = []
+    if wm.get("hashing_key") is None:
+        wm["hashing_key"] = new_hashing_key()
+        wm["key_id"] = new_key_id()
+        changed.append("No hashing key in the config; a new private key was generated and saved.")
+    elif wm.get("key_id") is None:
+        wm["key_id"] = new_key_id()
+        changed.append("The hashing key had no key id; one was added and saved "
+                       "(reviews use it to say which key scored a text).")
+    validate_config(config)
+    if changed:
         save_config(config, path)
-        notes.append("No hashing key in the config; a new private key was generated and saved.")
-    else:
-        validate_config(config)
-    if config["watermark"]["hashing_key"] == HF_PUBLIC_KEY:
+        notes.extend(changed)
+    if wm["hashing_key"] == HF_PUBLIC_KEY:
         notes.append("The hashing key is Hugging Face's public default (15485863): "
                      "anyone with transformers can produce or verify this watermark. "
                      "Delete config/watermark_config.json to get a private key "
@@ -161,6 +218,7 @@ def create_config(path=None):
     path = pathlib.Path(path or CONFIG_PATH)
     config = copy.deepcopy(DEFAULT_CONFIG)
     config["watermark"]["hashing_key"] = new_hashing_key()
+    config["watermark"]["key_id"] = new_key_id()
     save_config(config, path)
     return config
 

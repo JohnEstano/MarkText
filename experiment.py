@@ -22,6 +22,7 @@ import pandas as pd
 
 import config as cfg
 import history
+import verdict
 
 APPEND_RETRIES = 3          # a locked CSV (Excel) gets a few seconds to be released
 
@@ -119,8 +120,9 @@ def run_batch(engine, prompts, lengths, runs=1, modes=MODES, seed_base=None,
             "seed_base": seed_base,
             "model_id": engine.config["model_id"],
             "device": engine.device,
-            "watermark": {k: v for k, v in engine.config["watermark"].items()
-                          if k != "hashing_key"},
+            "watermark": dict(cfg.public_watermark(engine.config),
+                              ignore_repeated_ngrams=engine.config["watermark"].get(
+                                  "ignore_repeated_ngrams", False)),
             "thresholds": {k: engine.config[k] for k in
                            ("detection_threshold", "possible_threshold", "min_tokens_for_verdict")},
         })
@@ -156,11 +158,7 @@ def run_batch(engine, prompts, lengths, runs=1, modes=MODES, seed_base=None,
             stats = engine.detect(gen["text"])
         if stats is None:
             # too short to score at all: log a placeholder so the cell counts
-            stats = {"num_tokens_scored": 0, "num_green_tokens": 0,
-                     "green_fraction": 0.0, "z_score": 0.0, "p_value": 1.0,
-                     "label": "INCONCLUSIVE (short text)", "device": engine.device,
-                     "watermark": {k: engine.config["watermark"][k] for k in
-                                   ("bias", "greenlist_ratio", "seeding_scheme", "context_width")}}
+            stats = verdict.placeholder_stats(engine.config, engine.device)
         extra = {"mode": mode, "batch_id": batch_id, "max_new_tokens": L,
                  "seed": seed, "gen_tokens": gen["new_tokens"],
                  "note": json.dumps({"p": p, "r": r})}
@@ -201,7 +199,7 @@ def summarise_batch(df, config):
                                      "flagged_rate", "possible_or_above_rate",
                                      "inconclusive_rate", "retokenize_mismatch"])
     d = df.copy()
-    d["flagged"] = d["result"] == "LIKELY MARKTEXT"
+    d["flagged"] = d["result"] == verdict.LABEL_LIKELY
     d["possible_or_above"] = d["z_score"] >= pos
     d["inconclusive"] = d["result"].str.startswith("INCONCLUSIVE")
     d["mismatch"] = (d["gen_tokens"] - d["context_width"] + 1) != d["tokens_scored"]

@@ -18,11 +18,17 @@ from transformers import (
     WatermarkingConfig,
 )
 
-LABEL_LIKELY = "LIKELY MARKTEXT"
-LABEL_POSSIBLE = "POSSIBLE WATERMARK"
-LABEL_NOT_DETECTED = "NOT DETECTED"
-LABEL_INCONCLUSIVE = "INCONCLUSIVE (short text)"
-LABELS = (LABEL_LIKELY, LABEL_POSSIBLE, LABEL_NOT_DETECTED, LABEL_INCONCLUSIVE)
+import config as cfg
+# The labels and the threshold rule live in verdict.py (no torch); they are
+# re-exported here so engine.LABEL_* and engine.classify keep working.
+from verdict import (  # noqa: F401
+    LABEL_INCONCLUSIVE,
+    LABEL_LIKELY,
+    LABEL_NOT_DETECTED,
+    LABEL_POSSIBLE,
+    LABELS,
+    classify,
+)
 
 
 def _resolve_device(preference):
@@ -32,17 +38,6 @@ def _resolve_device(preference):
     if pref == "cpu":
         return "cpu"
     raise ValueError("Unknown device {!r}; use auto, cpu or cuda".format(preference))
-
-
-def classify(z, tokens_scored, config):
-    """Verdict label for a z-score. All thresholds come from the config."""
-    if tokens_scored < int(config.get("min_tokens_for_verdict", 0)):
-        return LABEL_INCONCLUSIVE
-    if z >= float(config.get("detection_threshold", 4.0)):
-        return LABEL_LIKELY
-    if z >= float(config.get("possible_threshold", 2.0)):
-        return LABEL_POSSIBLE
-    return LABEL_NOT_DETECTED
 
 
 class _CancelCriteria(StoppingCriteria):
@@ -136,7 +131,6 @@ class Engine:
             output = self.model.generate(**inputs, **gen_kwargs)
 
         new_tokens = output[0][inputs["input_ids"].shape[1]:]
-        wm = self.config["watermark"]
         return {
             "text": self.tokenizer.decode(new_tokens, skip_special_tokens=True),
             "mode": "watermarked" if watermarked else "normal",
@@ -151,13 +145,8 @@ class Engine:
             "top_p": gen_kwargs["top_p"],
             "top_k": gen_kwargs["top_k"],
             "repetition_penalty": gen_kwargs["repetition_penalty"],
-            "watermark": {
-                "greenlist_ratio": wm["greenlist_ratio"],
-                "bias": wm["bias"],
-                "seeding_scheme": wm["seeding_scheme"],
-                "context_width": wm["context_width"],
-                "hashing_key": wm["hashing_key"],
-            },
+            # never the hashing key: this dict ends up in sidecar files
+            "watermark": cfg.public_watermark(self.config),
         }
 
     # ------------------------------------------------------------------ detect
@@ -177,7 +166,6 @@ class Engine:
 
         tokens_scored = int(result.num_tokens_scored[0])
         z = float(result.z_score[0])
-        wm = self.config["watermark"]
         return {
             "num_tokens_scored": tokens_scored,
             "num_green_tokens": int(result.num_green_tokens[0]),
@@ -190,10 +178,5 @@ class Engine:
             # context the score was produced under, for the history log
             "input_tokens": int(ids.shape[1]),
             "device": self.device,
-            "watermark": {
-                "bias": wm["bias"],
-                "greenlist_ratio": wm["greenlist_ratio"],
-                "seeding_scheme": wm["seeding_scheme"],
-                "context_width": wm["context_width"],
-            },
+            "watermark": cfg.public_watermark(self.config),
         }

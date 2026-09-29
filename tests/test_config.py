@@ -38,6 +38,10 @@ def test_validate_accepts_defaults_with_key():
     (("possible_threshold",), 5.0),          # >= detection_threshold
     (("max_new_tokens",), -1),
     (("watermark", "hashing_key"), "abc"),
+    (("watermark", "key_id"), "NOT-HEX!"),
+    (("classroom", "assistant_enabled"), "yes"),
+    (("classroom", "assistant_max_tokens"), 10),
+    (("classroom", "assistant_max_tokens"), True),
 ])
 def test_validate_rejects_bad_values(path, value):
     c = good()
@@ -100,3 +104,47 @@ def test_partial_file_gets_defaults(tmp_path):
     assert c["watermark"]["hashing_key"] == 7
     assert c["top_k"] == 20
     assert c["min_tokens_for_verdict"] == 100
+
+
+def test_classroom_defaults_are_merged_into_old_files(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text(json.dumps({"watermark": {"hashing_key": 7}}), encoding="utf-8")
+    c = cfg.load_config(path, [])
+    assert c["classroom"] == {"assistant_enabled": True, "assistant_max_tokens": 300}
+
+
+def test_new_config_gets_a_key_id(tmp_path):
+    c = cfg.load_config(tmp_path / "wm.json", [])
+    assert cfg.KEY_ID_PATTERN.fullmatch(c["watermark"]["key_id"])
+
+
+def test_key_id_is_added_to_an_existing_key_and_saved(tmp_path):
+    path = tmp_path / "wm.json"
+    path.write_text(json.dumps({"watermark": {"hashing_key": 7}}), encoding="utf-8")
+    notes = []
+    c = cfg.load_config(path, notes)
+    key_id = c["watermark"]["key_id"]
+    assert cfg.KEY_ID_PATTERN.fullmatch(key_id)
+    assert json.loads(path.read_text(encoding="utf-8"))["watermark"]["key_id"] == key_id
+    assert any("key id" in n for n in notes)
+    assert cfg.load_config(path, [])["watermark"]["key_id"] == key_id     # stable afterwards
+
+
+def test_key_id_is_not_derived_from_the_key(tmp_path):
+    ids = set()
+    for name in ("a.json", "b.json"):
+        path = tmp_path / name
+        path.write_text(json.dumps({"watermark": {"hashing_key": 7}}), encoding="utf-8")
+        ids.add(cfg.load_config(path, [])["watermark"]["key_id"])
+    assert len(ids) == 2                      # same key, different labels
+
+
+def test_public_watermark_and_redacted_never_show_the_key():
+    c = good()
+    c["watermark"]["key_id"] = "0a1b2c3d"
+    pub = cfg.public_watermark(c)
+    assert "hashing_key" not in pub and pub["key_id"] == "0a1b2c3d"
+    assert set(pub) == set(cfg.PUBLIC_WATERMARK_KEYS)
+    shown = cfg.redacted(c)
+    assert shown["watermark"]["hashing_key"] == "(hidden)"
+    assert c["watermark"]["hashing_key"] == 12345                 # original untouched
