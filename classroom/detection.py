@@ -1,0 +1,84 @@
+"""Scoring student submissions: where a student's text meets the detector.
+
+detect_submission() writes two files, on purpose:
+1. logs/detection_history.csv, through history.append_history with source
+   "submission". It is the lab's audit log of every detection the engine
+   has run; its note column holds the class, assignment, submission and
+   student ids as JSON.
+2. data/reviews.csv, through reviews.record_detection. It is the teacher's
+   record: a snapshot of the numbers plus room for a decision.
+The review keeps its own copy of the numbers because the lab's "Clear
+history" empties the log (with a backup) and a review must outlive that.
+Neither file lets a measurement change once written, so the copies cannot
+drift apart; the history run_id links them.
+
+The engine is a parameter. A later version with several models or keys
+passes another engine, and each review records which one scored the text
+(model_id, key_id).
+"""
+
+import json
+
+import history
+import verdict
+from classroom import classes, reviews, submissions
+
+
+def history_note(submission):
+    return json.dumps({"class_id": submission["class_id"],
+                       "assignment_id": submission["assignment_id"],
+                       "submission_id": submission["submission_id"],
+                       "username": submission["username"],
+                       "version": int(submission["version"])})
+
+
+def _history_extra(submission):
+    extra = {"note": history_note(submission)}
+    side = submissions.sidecar(submission) or {}
+    gen = side.get("generation")
+    if gen:                                   # drafted with the assistant: known provenance
+        extra.update(mode=gen.get("mode", ""), seed=gen.get("seed", ""),
+                     max_new_tokens=gen.get("max_new_tokens", ""),
+                     gen_tokens=gen.get("new_tokens", ""))
+    return extra
+
+
+def detect_submission(engine, lock, submission, detected_by):
+    """Score one submission, log it, record the review, return the review."""
+    text = submissions.read_text(submission)
+    with lock:
+        stats = engine.detect(text)
+    if stats is None:                         # too short to score at all
+        stats = verdict.placeholder_stats(engine.config, engine.device)
+    run_id = history.append_history(stats, source="submission",
+                                    filename="data/" + submission["text_path"],
+                                    extra=_history_extra(submission))
+    key_id = (stats.get("watermark") or {}).get("key_id") or ""
+    return reviews.record_detection(submission, stats, run_id,
+                                    engine.config.get("model_id", ""), key_id, detected_by)
+
+
+def pending(assignment_id):
+    """Current submissions of students still in the class that have not been
+    scored yet, oldest first (the order they were handed in)."""
+    reviewed = reviews.latest_by_submission(assignment_id)
+    rows = [s for s in submissions.list_submissions(assignment_id)
+            if s["submission_id"] not in reviewed
+            and classes.is_member(s["class_id"], s["username"])]
+    return sorted(rows, key=lambda s: s["submitted_at"])
+
+
+def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event=None):
+    """Score several submissions; the same loop shape as experiment.run_batch.
+    cancel_event is checked before each one; on_progress(done, total, review)
+    runs after each. Returns the reviews written."""
+    written = []
+    total = len(items)
+    for done, submission in enumerate(items, 1):
+        if cancel_event is not None and cancel_event.is_set():
+            break
+        review = detect_submission(engine, lock, submission, detected_by)
+        written.append(review)
+        if on_progress:
+            on_progress(done, total, review)
+    return written
