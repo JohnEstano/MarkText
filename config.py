@@ -13,6 +13,12 @@ stops the program with a ValueError that names the problem. It is never
 replaced: a replacement would carry a new hashing key, and every text
 watermarked with the old key would silently stop being detected.
 
+config_version marks the file's layout. A version 1 file (no
+config_version) is migrated once: repeated n-grams are then counted once
+(ignore_repeated_ngrams true), because version 1 files carry the old
+default, false, written by this loader rather than chosen by a person; the
+note says how to set it back.
+
 The hashing key is the one secret in this file. public_watermark() and
 redacted() are the only ways config data should leave the machine (sidecar
 files, reports, the About page). key_id is a random public label for the
@@ -31,7 +37,10 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent
 # verify text made with it, so it is flagged when found in a config.
 HF_PUBLIC_KEY = 15485863
 
+CONFIG_VERSION = 2
+
 DEFAULT_CONFIG = {
+    "config_version": CONFIG_VERSION,
     "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
     "device": "auto",
     "max_new_tokens": 300,
@@ -50,7 +59,9 @@ DEFAULT_CONFIG = {
         "hashing_key": None,
         # random public label of the key above; regenerated with the key
         "key_id": None,
-        "ignore_repeated_ngrams": False,
+        # count a repeated (context, token) n-gram once: a second copy of a
+        # phrase is not new evidence (scorer.py, arXiv:2306.04634)
+        "ignore_repeated_ngrams": True,
     },
     "detection_threshold": 4.0,
     "possible_threshold": 2.0,
@@ -116,6 +127,9 @@ def validate_config(config):
         if not cond:
             raise ValueError("watermark_config.json: " + msg)
 
+    need(isinstance(config.get("config_version"), int) and not isinstance(config["config_version"], bool)
+         and 1 <= config["config_version"] <= CONFIG_VERSION,
+         "config_version must be an integer from 1 to {}".format(CONFIG_VERSION))
     need(isinstance(config.get("model_id"), str) and config["model_id"],
          "model_id must be a non-empty string")
     need(str(config.get("device", "")).lower() in VALID_DEVICES,
@@ -190,6 +204,14 @@ def load_config(path=None, notes=None):
     config = _deep_merge(DEFAULT_CONFIG, user)
     wm = config["watermark"]
     changed = []
+    if "config_version" not in user:
+        # version 1: its false was the loader's old default, written out on save
+        wm["ignore_repeated_ngrams"] = True
+        config["config_version"] = CONFIG_VERSION
+        changed.append("The config was updated to version {}: a phrase repeated in a text now "
+                       "counts once when scoring (watermark.ignore_repeated_ngrams: true), because "
+                       "counting repeats inflates z on human text. Set it to false to count every "
+                       "repeat as before.".format(CONFIG_VERSION))
     if wm.get("hashing_key") is None:
         wm["hashing_key"] = new_hashing_key()
         wm["key_id"] = new_key_id()

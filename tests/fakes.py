@@ -58,4 +58,5 @@ class FakeEngine:
                 "green_fraction": green, "z_score": z, "prediction": marked,
                 "p_value": 1e-9 if marked else 0.69, "confidence": 0.99,
                 "label": verdict.classify(z, scored, self.config), "input_tokens": len(words),
+                "repeated": 0, "passage": None,
                 "device": self.device, "watermark": cfg.public_watermark(self.config)}

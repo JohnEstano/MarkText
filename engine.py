@@ -1,9 +1,9 @@
 """MarkText generation and detection engine.
 
-Wraps Hugging Face Qwen2.5 + WatermarkingConfig / WatermarkDetector into
-one class. The same WatermarkingConfig object is handed to generate() and
-to the detector, so generation and detection cannot disagree on parameters.
-The engine is also the only place that turns a z-score into a verdict.
+Wraps Hugging Face Qwen2.5 and WatermarkingConfig for generation, and a
+Scorer (scorer.py) for detection. Both are built from the same watermark
+settings in the config, so generation and detection cannot disagree on
+parameters; the scorer reuses the model's tokenizer and configuration.
 """
 
 import random
@@ -14,11 +14,11 @@ from transformers import (
     AutoTokenizer,
     StoppingCriteria,
     StoppingCriteriaList,
-    WatermarkDetector,
     WatermarkingConfig,
 )
 
 import config as cfg
+from scorer import Scorer
 # The labels and the threshold rule live in verdict.py (no torch); they are
 # re-exported here so engine.LABEL_* and engine.classify keep working.
 from verdict import (  # noqa: F401
@@ -78,10 +78,8 @@ class Engine:
             progress_callback("Ready.")
 
     def _build_watermark(self):
-        """The watermark settings, shared by generate() and the detector."""
+        """The watermark settings, shared by generate() and the scorer."""
         wm_cfg = self.config["watermark"]
-        # detection needs this many tokens before the first one can be scored
-        self.min_tokens = int(wm_cfg["context_width"]) + 1
         self.watermark_config = WatermarkingConfig(
             greenlist_ratio=wm_cfg["greenlist_ratio"],
             bias=wm_cfg["bias"],
@@ -89,12 +87,9 @@ class Engine:
             context_width=wm_cfg["context_width"],
             hashing_key=wm_cfg["hashing_key"],
         )
-        self.detector = WatermarkDetector(
-            model_config=self.model.config,
-            device=str(self.device),
-            watermarking_config=self.watermark_config,
-            ignore_repeated_ngrams=bool(wm_cfg.get("ignore_repeated_ngrams", False)),
-        )
+        self.scorer = Scorer(self.config, self.tokenizer, self.model.config)
+        # detection needs this many tokens before the first one can be scored
+        self.min_tokens = self.scorer.min_tokens
 
     def reconfigure(self, config):
         """Adopt an edited config (a new key, other thresholds or sampling
@@ -166,31 +161,6 @@ class Engine:
     # ------------------------------------------------------------------ detect
     def detect(self, text):
         """Score a text. Returns None when it is too short to score at all,
-        otherwise a dict of statistics plus the verdict `label`."""
-        threshold = float(self.config.get("detection_threshold", 4.0))
-
-        inputs = self.tokenizer(text, return_tensors="pt").to(self.device)
-        ids = inputs["input_ids"]
-
-        if ids.shape[1] < self.min_tokens:
-            return None
-
-        with torch.no_grad():
-            result = self.detector(ids, z_threshold=threshold, return_dict=True)
-
-        tokens_scored = int(result.num_tokens_scored[0])
-        z = float(result.z_score[0])
-        return {
-            "num_tokens_scored": tokens_scored,
-            "num_green_tokens": int(result.num_green_tokens[0]),
-            "green_fraction": float(result.green_fraction[0]),
-            "z_score": z,
-            "prediction": bool(result.prediction[0]),
-            "p_value": float(result.p_value[0]),
-            "confidence": float(result.confidence[0]),
-            "label": classify(z, tokens_scored, self.config),
-            # context the score was produced under, for the history log
-            "input_tokens": int(ids.shape[1]),
-            "device": self.device,
-            "watermark": cfg.public_watermark(self.config),
-        }
+        otherwise a dict of statistics plus the verdict `label` (see
+        scorer.py for every step)."""
+        return self.scorer.detect(text)

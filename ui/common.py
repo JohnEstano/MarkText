@@ -393,11 +393,57 @@ def metric_row(items):
 _MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>$])")
 
 
+def _escape(text):
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
+
+
 def plain(text):
     """Show user-written text literally in st.markdown (no accidental bold,
     links or formulas) while keeping its line breaks."""
-    escaped = _MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
-    return "  \n".join(escaped.split("\n"))
+    return "  \n".join(_escape(text).split("\n"))
+
+
+def highlighted(text, start, end, colour="orange"):
+    """plain(text) with the characters start..end on a coloured background
+    (the strongest passage the scorer found). Each line of the passage is
+    marked on its own, because a background cannot span a line break."""
+    text = text or ""
+    start, end = max(0, int(start)), min(len(text), int(end))
+    if start >= end:
+        return plain(text)
+    marked = [":{}-background[{}]".format(colour, _escape(line)) if line.strip() else _escape(line)
+              for line in text[start:end].split("\n")]
+    body = _escape(text[:start]) + "\n".join(marked) + _escape(text[end:])
+    return "  \n".join(body.split("\n"))
+
+
+def passage_decided(review, config):
+    """True when a review's "likely" came from a passage, not from the
+    whole text: the whole-text z is under the threshold."""
+    if not review or review.get("label") != verdict.LABEL_LIKELY:
+        return False
+    if review.get("passage_z") in ("", None) or review.get("passage_start") in ("", None):
+        return False
+    try:
+        return float(review["z_score"]) < float(config["detection_threshold"])
+    except (TypeError, ValueError):
+        return False
+
+
+def scoring_notes(repeated, passage_z, passage_p, decisive):
+    """Captions that explain a score beyond its z: repeats counted once,
+    and the strongest passage with its corrected p-value."""
+    notes = []
+    if repeated and int(float(repeated)) > 0:
+        count = int(float(repeated))
+        notes.append("{} repeated phrase{} counted once: a repeat is not new evidence.".format(
+            count, "" if count == 1 else "s"))
+    if passage_z not in ("", None):
+        notes.append("Strongest passage (highlighted): z = {:.2f} over {} scored tokens, p = {} after "
+                     "correcting for every passage tried.{}".format(
+                         float(passage_z), verdict.PASSAGE_WINDOW, passage_p,
+                         " The verdict comes from this passage." if decisive else ""))
+    return notes
 
 
 def when(timestamp):

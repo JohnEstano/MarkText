@@ -394,3 +394,19 @@ def test_the_demo_class_uses_the_password_typed_in_the_dialog(new_app, data_dir)
     ok(at.button(key="demo_build").click().run())
     assert accounts.authenticate("dan", "river-lamp-41")
     assert titles(at) == ["Review"]
+
+
+def test_a_passage_that_decided_the_verdict_is_highlighted(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    text = "I wrote this part myself. " * 20 + "The assistant wrote this part. " * 30
+    sub = submissions.submit(aid, "alice", text)
+    start = text.index("The assistant")
+    stats = {"num_tokens_scored": 300, "num_green_tokens": 176, "green_fraction": 176 / 300,
+             "z_score": 3.12, "p_value": 9e-4, "label": "LIKELY MARKTEXT", "device": "cpu",
+             "repeated": 0, "passage": {"z": 6.2, "p": 2.5e-9, "start": start, "end": len(text)}}
+    reviews.record_detection(sub, stats, "run1", "fake/model", "0a1b2c3d", "prof")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    shown = " ".join(m.value for m in at.markdown)
+    assert r":orange-background[The assistant wrote this part\." in shown
+    assert any("The verdict comes from this passage" in c.value for c in at.caption)

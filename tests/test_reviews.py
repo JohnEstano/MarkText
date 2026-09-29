@@ -84,3 +84,15 @@ def test_nothing_is_shown_before_a_return(course):
     reviews.decide(rev["review_id"], "flagged", "", "prof")
     assert reviews.shown_to_student(reviews.get_review(rev["review_id"])) is None
     assert reviews.shown_to_student(None) is None
+
+
+def test_the_strongest_passage_is_kept_with_the_review(course):
+    sub = submissions.submit(course["assignment"]["assignment_id"], "alice", "some essay text")
+    passage = {"z": 5.01, "p": 1.2e-5, "start": 120, "end": 860, "decisive": True}
+    rev = reviews.record_detection(sub, dict(STATS, repeated=2, passage=passage), "run1", "fake/model",
+                                   "0a1b2c3d", "prof")
+    assert (rev["passage_z"], rev["passage_p"], rev["passage_start"], rev["passage_end"]) == \
+        ("5.01", "1.200e-05", "120", "860")
+    assert rev["repeated"] == "2"
+    plain = reviews.record_detection(sub, STATS, "run2", "fake/model", "0a1b2c3d", "prof")
+    assert plain["passage_z"] == "" and plain["passage_start"] == ""

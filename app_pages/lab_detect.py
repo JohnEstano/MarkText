@@ -67,6 +67,14 @@ with col_out:
                           help="Chance level is 50%.")
                 st.metric("z-score", "{:.2f}".format(stats["z_score"]), border=True)
                 st.metric("p-value", "{:.2e}".format(stats["p_value"]), border=True)
+            passage = stats.get("passage")
+            for note in common.scoring_notes(
+                    stats.get("repeated", 0), passage["z"] if passage else None,
+                    "{:.1e}".format(passage["p"]) if passage else "", bool(passage and passage["decisive"])):
+                st.caption(note)
+            if passage:
+                with st.expander("Show the passage", icon=":material/format_color_text:"):
+                    st.markdown(common.highlighted(state["detect_text"], passage["start"], passage["end"]))
     st.caption("MarkText detects only text it generated with its own key and parameters. It is not "
                "a universal AI-text detector: Not detected means this watermark was not found, not "
                "that a person wrote the text.")

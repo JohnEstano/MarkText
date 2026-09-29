@@ -222,9 +222,14 @@ with st.container(border=True):
                 sub["version"], common.when(sub["submitted_at"]), sub["words"], how))
             if sub["version_note"]:
                 st.caption("Student's note: {}".format(sub["version_note"]))
+            review = reviews.latest_review(sub["submission_id"])
+            # a passage is highlighted only when it made the verdict "likely"
+            decisive = common.passage_decided(review, common.load_config())
             with st.container(height=380, border=True):
                 text = common.submission_text(sub)
-                if text is not None:
+                if text is not None and decisive:
+                    st.markdown(common.highlighted(text, review["passage_start"], review["passage_end"]))
+                elif text is not None:
                     st.markdown(common.plain(text))
             older = submissions.versions(assignment_id, username)[:-1]
             if older:
@@ -240,7 +245,6 @@ with st.container(border=True):
                                 if text is not None:
                                     st.markdown(common.plain(text))
         with score_col:
-            review = reviews.latest_review(sub["submission_id"])
             if review is None:
                 st.markdown("**Not scored yet**")
                 st.caption("Scoring checks the text for this installation's watermark. It takes a "
@@ -257,6 +261,10 @@ with st.container(border=True):
                     st.metric("z-score", review["z_score"], border=True,
                               help="4 or more: likely MarkText. 2 to 4: possible. Under 100 tokens "
                                    "scored: inconclusive.")
+                for note in common.scoring_notes(review.get("repeated"),
+                                                 review.get("passage_z") if decisive else "",
+                                                 review.get("passage_p"), decisive):
+                    st.caption(note)
                 st.caption("Scored {} with {}, key {}.".format(
                     common.when(review["detected_at"]), review["model_id"], review["key_id"] or "unknown"))
                 current_key = cfg.public_watermark(common.load_config()).get("key_id")

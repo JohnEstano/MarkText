@@ -8,6 +8,10 @@ Since 2026-09-23 every row has a unique run_id and records the context
 it was scored under (mode, seed, parameters, device) so records can be
 compared, annotated, updated or deleted one at a time. An older file in
 the 7-column layout is migrated on first use; the original is kept.
+
+Since 2026-09-30 a row also records how many repeated n-grams were skipped
+and the strongest passage (scorer.py). A file whose header is an older,
+shorter version of COLUMNS is extended in place, after a backup copy.
 """
 
 import csv
@@ -43,6 +47,9 @@ COLUMNS = [
     "context_width",
     "device",
     "note",
+    "repeated",        # scored positions whose n-gram came earlier (counted once)
+    "passage_z",       # z of the strongest 150-token passage, when the text is longer
+    "passage_p",       # its p-value, Bonferroni-corrected for the windows tried
 ]
 
 # the layout used before run_id existed; recognised for migration
@@ -76,7 +83,7 @@ def _write_rows(rows, path=None):
 
 
 def _read_header():
-    with open(HISTORY_PATH, "r", newline="", encoding="utf-8") as f:
+    with open(HISTORY_PATH, "r", newline="", encoding="utf-8-sig") as f:
         return next(csv.reader(f), [])
 
 
@@ -92,7 +99,26 @@ def ensure_history():
         return None
     if header == LEGACY_COLUMNS:
         return _migrate_legacy()
+    if header and header == COLUMNS[:len(header)]:
+        return _extend_columns()
     raise ValueError("Unexpected history header: {}".format(header))
+
+
+def _extend_columns():
+    """An older layout without the newest columns: copy it to logs/exports,
+    then rewrite it with the new columns empty. Returns the copy's path."""
+    backup = _copy_to_exports("detection_history_before_columns_{}.csv".format(_stamp()))
+    with open(HISTORY_PATH, "r", newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    _write_rows(rows)
+    return backup
+
+
+def _copy_to_exports(name):
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    target = EXPORT_DIR / name
+    shutil.copyfile(HISTORY_PATH, target)
+    return target
 
 
 def _migrate_legacy():
@@ -132,6 +158,7 @@ def append_history(stats, source="manual", filename="", extra=None):
         raise ValueError("source must be one of {}".format(SOURCES))
     extra = extra or {}
     wm = stats.get("watermark", {})
+    passage = stats.get("passage")
     row = {
         "run_id": new_run_id(),
         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -154,6 +181,9 @@ def append_history(stats, source="manual", filename="", extra=None):
         "context_width": wm.get("context_width", ""),
         "device": stats.get("device", ""),
         "note": extra.get("note", ""),
+        "repeated": stats.get("repeated", ""),
+        "passage_z": round(passage["z"], 2) if passage else "",
+        "passage_p": "{:.3e}".format(passage["p"]) if passage else "",
     }
     with open(HISTORY_PATH, "a", newline="", encoding="utf-8") as f:
         csv.DictWriter(f, fieldnames=COLUMNS).writerow(row)
@@ -164,7 +194,7 @@ def read_history():
     """All rows, newest first. Raises OSError, csv.Error or UnicodeDecodeError
     on a bad file rather than pretending the history is empty."""
     ensure_history()
-    with open(HISTORY_PATH, "r", newline="", encoding="utf-8") as f:
+    with open(HISTORY_PATH, "r", newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     rows.reverse()
     return rows
@@ -223,10 +253,7 @@ def delete_record(run_id):
 def backup_history():
     """Copy the current history file into logs/exports/ and return the path."""
     ensure_history()
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    backup = EXPORT_DIR / "detection_history_backup_{}.csv".format(_stamp())
-    shutil.copyfile(HISTORY_PATH, backup)
-    return backup
+    return _copy_to_exports("detection_history_backup_{}.csv".format(_stamp()))
 
 
 def clear_history():

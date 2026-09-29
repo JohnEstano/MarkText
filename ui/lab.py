@@ -76,7 +76,7 @@ def load_history_df():
     the csv module; pandas only reads it here."""
     history.ensure_history()
     try:
-        df = pd.read_csv(history.HISTORY_PATH, parse_dates=["timestamp"], encoding="utf-8")
+        df = pd.read_csv(history.HISTORY_PATH, parse_dates=["timestamp"], encoding="utf-8-sig")
     except pd.errors.EmptyDataError:
         return pd.DataFrame(columns=history.COLUMNS)
     for c in ("filename", "mode", "batch_id", "source", "note", "seeding_scheme"):

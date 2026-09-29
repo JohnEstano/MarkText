@@ -124,3 +124,24 @@ def test_submission_is_a_known_source(hist):
     rid = hist.append_history(STATS, source="submission", filename="data/submissions/x/v001.txt",
                               extra={"note": '{"submission_id": "sub_1"}'})
     assert hist.find_record(rid)["source"] == "submission"
+
+
+def test_an_older_shorter_header_is_extended_with_a_backup(hist):
+    older = hist.COLUMNS[:hist.COLUMNS.index("note") + 1]           # the 21-column layout
+    hist.HISTORY_PATH.parent.mkdir(parents=True)
+    with open(hist.HISTORY_PATH, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=older)
+        w.writeheader()
+        w.writerow({"run_id": "abc12345", "z_score": "1.5", "result": "NOT DETECTED"})
+    backup = hist.ensure_history()
+    assert backup is not None and backup.exists()
+    rows = hist.read_history()
+    assert list(rows[0].keys()) == hist.COLUMNS and rows[0]["run_id"] == "abc12345"
+    assert rows[0]["passage_z"] == ""
+
+
+def test_the_passage_and_repeats_are_logged(hist):
+    passage = {"z": 5.123, "p": 2.4e-6, "start": 10, "end": 900}
+    run_id = hist.append_history(dict(STATS, repeated=3, passage=passage))
+    row = hist.find_record(run_id)
+    assert (row["repeated"], row["passage_z"], row["passage_p"]) == ("3", "5.12", "2.400e-06")

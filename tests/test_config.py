@@ -161,3 +161,34 @@ def test_public_watermark_and_redacted_never_show_the_key():
     shown = cfg.redacted(c)
     assert shown["watermark"]["hashing_key"] == "(hidden)"
     assert c["watermark"]["hashing_key"] == 12345                 # original untouched
+
+
+def test_a_version_1_file_is_migrated_to_count_repeats_once(tmp_path):
+    path = tmp_path / "wm.json"
+    old = good()
+    del old["config_version"]
+    old["watermark"]["ignore_repeated_ngrams"] = False          # what the old loader wrote
+    path.write_text(json.dumps(old), encoding="utf-8")
+    notes = []
+    c = cfg.load_config(path, notes)
+    assert c["config_version"] == 2 and c["watermark"]["ignore_repeated_ngrams"] is True
+    assert any("counts once" in n for n in notes)
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["config_version"] == 2 and saved["watermark"]["hashing_key"] == 12345
+
+
+def test_a_version_2_choice_is_kept(tmp_path):
+    path = tmp_path / "wm.json"
+    new = good()
+    new["watermark"]["ignore_repeated_ngrams"] = False
+    path.write_text(json.dumps(new), encoding="utf-8")
+    notes = []
+    assert cfg.load_config(path, notes)["watermark"]["ignore_repeated_ngrams"] is False
+    assert not any("counts once" in n for n in notes)
+
+
+def test_the_example_file_is_current():
+    example = json.loads((cfg.BASE_DIR / "config" / "watermark_config.example.json").read_text(encoding="utf-8"))
+    assert example["config_version"] == cfg.CONFIG_VERSION
+    assert set(example) == set(cfg.DEFAULT_CONFIG)
+    assert set(example["watermark"]) == set(cfg.DEFAULT_CONFIG["watermark"])

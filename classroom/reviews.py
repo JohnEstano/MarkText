@@ -21,7 +21,8 @@ from classroom import classes, paths, store
 COLUMNS = ["review_id", "submission_id", "assignment_id", "class_id", "username", "version",
            "run_id", "model_id", "key_id", "device", "tokens_scored", "green_pct", "z_score",
            "p_value", "label", "detected_at", "detected_by", "decision", "note", "returned",
-           "returned_at", "decided_by", "decided_at", "returned_decision", "returned_note"]
+           "returned_at", "decided_by", "decided_at", "returned_decision", "returned_note",
+           "repeated", "passage_z", "passage_p", "passage_start", "passage_end"]
 DECISIONS = ("pending", "accepted", "flagged", "needs_review")
 DECISION_LABELS = {"pending": "Pending", "accepted": "Accepted", "flagged": "Flagged",
                    "needs_review": "Needs review"}
@@ -38,6 +39,7 @@ def _rows():
 def record_detection(submission, stats, run_id, model_id, key_id, detected_by):
     """Append the review row for one scoring of a submission and return it."""
     previous = latest_review(submission["submission_id"])
+    passage = stats.get("passage")
     row = {
         "review_id": store.new_id("rev"),
         "submission_id": submission["submission_id"],
@@ -58,6 +60,12 @@ def record_detection(submission, stats, run_id, model_id, key_id, detected_by):
         "detected_by": detected_by,
         "decision": "pending", "note": "", "returned": "0", "returned_at": "",
         "decided_by": "", "decided_at": "", "returned_decision": "", "returned_note": "",
+        # the strongest passage (scorer.py), with its characters in the text
+        "repeated": stats.get("repeated", ""),
+        "passage_z": round(passage["z"], 2) if passage else "",
+        "passage_p": "{:.3e}".format(passage["p"]) if passage else "",
+        "passage_start": passage.get("start", "") if passage else "",
+        "passage_end": passage.get("end", "") if passage else "",
     }
     if previous:
         row.update({k: previous.get(k, "") for k in CARRIED_OVER})

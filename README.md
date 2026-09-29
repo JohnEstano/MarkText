@@ -51,21 +51,21 @@ The review keeps its own copy of the numbers so that clearing the lab history ne
 |-----------|------|
 | Language model | `Qwen/Qwen2.5-0.5B-Instruct` (Hugging Face Hub; about 1 GB, safetensors) |
 | Watermarking | Kirchenbauer et al. 2023 green/red list, Hugging Face's implementation (`transformers.WatermarkingConfig`) |
-| Detection | `transformers.WatermarkDetector`: one-proportion z-test |
+| Detection | `scorer.py`: a one-proportion z-test on the green list of Hugging Face's `WatermarkLogitsProcessor`, counting each repeated n-gram once, with an exact p-value and a passage scan |
 | Web app | Streamlit multipage app (`app.py`, `app_pages/`, `ui/`), pandas and Altair for tables and charts |
 | Classroom rules | `classroom/`: plain Python with the standard library (`csv`, `json`, `hashlib`, `secrets`, `pathlib`) |
 | Desktop app | Tkinter (`main.py`), the original single-window MarkText |
 | Framework | PyTorch + Hugging Face Transformers |
 
-MarkText *uses* Hugging Face's implementation of the algorithm; it does not re-implement it. The project's own code is everything around it: the classroom, the file handling, the configuration that keeps generation and detection consistent, the front-ends and the experiment.
+MarkText *uses* Hugging Face's implementation of the watermark: the same `WatermarkLogitsProcessor` biases generation and says which tokens are green at detection time. The counting and the statistics are MarkText's own (`scorer.py`), because two parts of the library's `WatermarkDetector` (transformers 5.17) do not do what they say: its `ignore_repeated_ngrams` switch never finds a repeat (it puts tensors in a `Counter`, and tensors hash by identity), and its p-value drops a square root from the normal-tail approximation (0.039 instead of 0.023 at z = 2). A test checks that, counting every position, `scorer.py` gives exactly the library's token and green counts.
 
 ## Watermark algorithm
 
 At each generation step the vocabulary is split into a green list and a red list by a seeded shuffle. The seed comes from a secret key and the recent tokens (with `selfhash`, the candidate token itself is included). Green-list logits get a constant bias added before sampling, so green tokens are favoured but not forced.
 
-At detection time the detector re-tokenizes the text, recomputes the green list at every position, and counts green tokens. Under the null hypothesis "the writer did not know the key", each scored token is green with probability `greenlist_ratio`, so the count is binomial and
+At detection time the scorer re-tokenizes the text, recomputes the green list at every position, and counts green tokens. A repeated n-gram (the same context and token again) is counted once: its colour is fixed by the key, so a second copy of a phrase is not new evidence, and counting it again inflates z on human text that repeats itself (the recommendation of arXiv:2306.04634). Under the null hypothesis "the writer did not know the key", each distinct scored n-gram is green with probability `greenlist_ratio`, so the count is binomial and
 
-    z = (green − γ·T) / sqrt(T·γ·(1 − γ))
+    z = (green − γ·T) / sqrt(T·γ·(1 − γ)),   p = P(Z ≥ z)
 
 This project runs with `greenlist_ratio = 0.5` and `bias = 3.0` (Hugging Face's defaults are 0.25 and 2.0). Verdicts:
 
@@ -77,6 +77,8 @@ This project runs with `greenlist_ratio = 0.5` and `bias = 3.0` (Hugging Face's 
 | fewer than `min_tokens_for_verdict` (100) tokens scored | INCONCLUSIVE (short text) |
 
 All four numbers live in `config/watermark_config.json` and are applied in one place (`verdict.classify`). The paper's own running example is z > 4, about a 3×10⁻⁵ false-positive probability.
+
+**Passages.** A student may paste an assistant draft into a longer essay; the whole-text z dilutes it. The scorer also scores windows of 150 scored tokens, one every 50 tokens. Looking at k windows is k tests, so the best window's p-value is multiplied by k (Bonferroni) and compared with the "likely" threshold's p-value (3.2×10⁻⁵ for z = 4). A passage can raise a verdict to LIKELY, never lower one and never produce POSSIBLE, so for text without the watermark the chance of LIKELY is at most twice one test's (6.3×10⁻⁵, the union bound) and the chance of POSSIBLE is unchanged. In simulation (human text as fair coin flips, a passage green 70% of the time, as the assistant's drafts measure), a 200-token passage inside a 1000-token essay is found as LIKELY 70% of the time; the whole-text z alone finds it 6% of the time. The review page highlights the passage.
 
 ## The key
 
@@ -222,7 +224,7 @@ Reading it: at 150 tokens the threshold of 4.0 catches 86 of 100 watermarked tex
 - Editing, paraphrasing or heavily rewriting a draft weakens or destroys the watermark, so a low score is not proof of independent work.
 - The key is a symmetric secret: leaking it allows forgery; rotating it orphans old texts (reviews say which key scored them).
 - Sign-in lasts for one browser tab: reloading the page signs you out. The files are meant for one server process; two servers on one `data/` folder are not supported.
-- Detection assumes independent scored positions; overlapping and repeated n-grams make the z-score an approximation.
+- Detection assumes independent scored positions. Repeated n-grams are counted once; overlapping n-grams still share tokens, so the z-score remains an approximation.
 - The underlying model generates from its own training data; MarkText does not claim ownership of it.
 
 ## Assignment requirements mapping

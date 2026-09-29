@@ -166,7 +166,12 @@ else:
             "timestamp": st.column_config.DatetimeColumn(format="YYYY-MM-DD HH:mm:ss"),
             "green_pct": st.column_config.NumberColumn("green %", format="%.2f"),
             "z_score": st.column_config.NumberColumn("z", format="%.2f"),
-            "p_value": st.column_config.NumberColumn(format="%.2e")})
+            "p_value": st.column_config.NumberColumn(format="%.2e"),
+            "repeated": st.column_config.NumberColumn(format="%d", help="Repeated n-grams, counted once"),
+            "passage_z": st.column_config.NumberColumn("passage z", format="%.2f",
+                                                       help="z of the strongest 150-token passage"),
+            "passage_p": st.column_config.NumberColumn("passage p", format="%.2e",
+                                                       help="Its p-value, corrected for every passage tried")})
 
 with st.expander("Manage one record by its run id", icon=":material/edit:"):
     rid = st.text_input("Run id", key="manage_id", placeholder="843167dd").strip()

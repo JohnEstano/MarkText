@@ -1,4 +1,5 @@
 {
+    "config_version": 2,
     "model_id": "Qwen/Qwen2.5-0.5B-Instruct",
     "device": "auto",
     "max_new_tokens": 300,
@@ -14,7 +15,7 @@
         "context_width": 5,
         "hashing_key": null,
         "key_id": null,
-        "ignore_repeated_ngrams": false
+        "ignore_repeated_ngrams": true
     },
     "detection_threshold": 4.0,
     "possible_threshold": 2.0,

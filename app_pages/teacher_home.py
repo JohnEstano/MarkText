@@ -152,8 +152,9 @@ with right.container(border=True, height="stretch"):
     else:
         st.altair_chart(charts.scores_chart(overview["scores"], float(config["detection_threshold"]),
                                             float(config["possible_threshold"])))
-        st.caption("Each dot is a student's current version. Above the upper line: likely MarkText; "
-                   "between the lines: possible. Fewer than {} tokens scored: inconclusive.".format(
+        st.caption("Each dot is a student's current version at its whole-text z. Above the upper line: "
+                   "likely MarkText; between the lines: possible. A red dot below the line had one "
+                   "passage that scored as likely. Fewer than {} tokens scored: inconclusive.".format(
                        config["min_tokens_for_verdict"]))
 
 # ------------------------------------------------- flags and classes
