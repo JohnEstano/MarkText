@@ -36,6 +36,7 @@ codeFont = "Geist Mono, monospace"
 baseRadius = "12px"
 buttonRadius = "full"
 showWidgetBorder = true
+showSidebarBorder = true
 greenColor = "#2f7d5b"
 greenBackgroundColor = "#e6f2ec"
 greenTextColor = "#1f5c42"
@@ -76,3 +77,12 @@ orangeTextColor = "#d4a24c"
 redColor = "#e07a7a"
 redBackgroundColor = "#331b1b"
 redTextColor = "#e07a7a"
+
+# The sidebar sits one step darker than the page in both themes.
+[theme.sidebar]
+backgroundColor = "#f1f1ef"
+secondaryBackgroundColor = "#fafaf9"
+
+[theme.dark.sidebar]
+backgroundColor = "#141416"
+secondaryBackgroundColor = "#1c1c1f"

@@ -157,16 +157,22 @@ def _records(frame, columns):
     return clean.to_dict("records")
 
 
+def assignment_report_rows(assignment_id):
+    return _records(assignment_frame(assignment_id), REPORT_COLUMNS)
+
+
+def class_summary_rows(class_id):
+    return _records(class_summary(class_id), SUMMARY_COLUMNS)
+
+
 def export_assignment_report(assignment_id):
     """Write the assignment's table to a new CSV under data/reports/."""
-    frame = assignment_frame(assignment_id)
     target = store.unique_path(paths.reports_dir(),
                                "assignment_{}_{}".format(assignment_id, store.stamp()), ".csv")
-    return store.write_new_csv(target, REPORT_COLUMNS, _records(frame, REPORT_COLUMNS))
+    return store.write_new_csv(target, REPORT_COLUMNS, assignment_report_rows(assignment_id))
 
 
 def export_class_summary(class_id):
-    frame = class_summary(class_id)
     target = store.unique_path(paths.reports_dir(),
                                "class_{}_summary_{}".format(class_id, store.stamp()), ".csv")
-    return store.write_new_csv(target, SUMMARY_COLUMNS, _records(frame, SUMMARY_COLUMNS))
+    return store.write_new_csv(target, SUMMARY_COLUMNS, class_summary_rows(class_id))

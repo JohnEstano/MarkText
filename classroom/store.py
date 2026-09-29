@@ -242,6 +242,18 @@ def write_new_json(path, data):
     return path
 
 
+def csv_text(columns, rows):
+    """The same CSV that write_new_csv() would write, as a string (for a
+    browser download of exactly what is saved on the server)."""
+    import io
+    buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(buffer, fieldnames=list(columns))
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({k: _cell(row.get(k, "")) for k in columns})
+    return buffer.getvalue()
+
+
 def write_new_csv(path, columns, rows):
     """A new CSV file (reports, exports). Written to a temp name first, so a
     half-written report never appears under its final name."""

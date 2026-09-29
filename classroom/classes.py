@@ -320,14 +320,18 @@ def claim_invites(username):
     return joined
 
 
-def export_roster(class_id):
-    """Write the class roster, with display names, to a new CSV file under
-    data/reports/ and return its path."""
-    record = get_class(class_id)
-    if record is None:
-        raise ValueError("There is no class {}.".format(class_id))
+def export_rows(class_id):
+    """The roster with display names, active first, as written by export_roster()."""
     names = accounts.display_names()
     rows = [dict(r, display_name=names.get(r["username"], "")) for r in roster(class_id, None)]
     rows.sort(key=lambda r: (STATUSES.index(r["status"]), r["username"]))
+    return rows
+
+
+def export_roster(class_id):
+    """Write the class roster, with display names, to a new CSV file under
+    data/reports/ and return its path."""
+    if get_class(class_id) is None:
+        raise ValueError("There is no class {}.".format(class_id))
     target = store.unique_path(paths.reports_dir(), "roster_{}_{}".format(class_id, store.stamp()), ".csv")
-    return store.write_new_csv(target, EXPORT_COLUMNS, rows)
+    return store.write_new_csv(target, EXPORT_COLUMNS, export_rows(class_id))
