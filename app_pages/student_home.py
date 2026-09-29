@@ -39,8 +39,8 @@ today = datetime.date.today()
 # ----------------------------------------------------------------- header
 with st.container(horizontal=True, vertical_alignment="bottom"):
     with st.container():
-        st.title("Hello, {}".format(common.first_name(user)), anchor=False)
-        names = ", ".join(c["name"] for c in my_classes)
+        st.title("Hello, {}".format(common.md(common.first_name(user))), anchor=False)
+        names = ", ".join(common.md(c["name"]) for c in my_classes)
         st.caption("Home · {}{}".format(today.strftime("%A, %B %d").replace(" 0", " "),
                                         " · " + names if names else ""))
     if my_classes:
@@ -88,8 +88,8 @@ with left.container(border=True, height="stretch"):
     for item in returned:
         with st.container(horizontal=True, vertical_alignment="center"):
             with st.container():
-                st.markdown("**{}**".format(item["title"]))
-                st.caption("{} · returned {}".format(item["class_name"], common.when(item["returned_at"])))
+                st.markdown("**{}**".format(common.md(item["title"])))
+                st.caption("{} · returned {}".format(common.md(item["class_name"]), common.when(item["returned_at"])))
             common.decision_badge(item["decision"])
             st.button("View", key="view_" + item["assignment_id"], type="tertiary",
                       on_click=common.open_assignment, args=(item["assignment_id"],))
@@ -100,15 +100,15 @@ with right.container(border=True, height="stretch"):
     for item in open_work:
         with st.container(border=True, horizontal=True, vertical_alignment="center"):
             with st.container():
-                st.markdown("**{}**".format(item["title"]))
+                st.markdown("**{}**".format(common.md(item["title"])))
                 due = "due {}".format(common.day(item["due_at"])) if item["due_at"] else "no due date"
                 if reports.due_soon(item["due_at"]) and item["my_state"] == "not submitted":
                     due += " (this week)"
-                st.caption("{} · {}".format(item["class_name"], due))
+                st.caption("{} · {}".format(common.md(item["class_name"]), due))
             common.state_badge(item["my_state"])
             st.button("Open", key="open_" + item["assignment_id"], on_click=common.open_assignment,
                       args=(item["assignment_id"],),
                       type="primary" if item["my_state"] == "not submitted" else "secondary")
     teachers = accounts.display_names()
-    st.caption("Teachers: {}".format(", ".join(sorted({teachers.get(c["teacher"], c["teacher"])
+    st.caption("Teachers: {}".format(", ".join(sorted({common.md(teachers.get(c["teacher"], c["teacher"]))
                                                       for c in my_classes}))))

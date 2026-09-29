@@ -41,3 +41,22 @@ def test_a_passage_decides_only_when_the_whole_text_is_under_the_threshold():
     assert not common.passage_decided(dict(base, z_score="3.1", label="POSSIBLE WATERMARK"), config)
     assert not common.passage_decided(dict(base, z_score="3.1", passage_z=""), config)
     assert not common.passage_decided(None, config)
+
+
+def test_md_keeps_user_text_literal():
+    assert common.md("![x](http://example.com/t.png)") == r"\!\[x\]\(http://example.com/t.png\)"
+    assert common.md("**bold** <b>html</b> $x$") == r"\*\*bold\*\* \<b\>html\</b\> \$x\$"
+    assert common.md("# not a heading") == r"\# not a heading"
+    assert common.md("1. not a list") == r"1\. not a list"
+    assert common.md("two\nlines") == "two lines"
+    assert common.md("Prof. Reyes") == "Prof. Reyes"
+
+
+def test_the_streamlit_server_options_are_set():
+    import tomllib
+    import config as cfg
+    with open(cfg.BASE_DIR / ".streamlit" / "config.toml", "rb") as f:
+        options = tomllib.load(f)
+    assert options["server"]["address"] == "localhost"
+    assert options["server"]["allowedHosts"] == ["localhost", "127.0.0.1"]
+    assert options["client"]["showErrorDetails"] == "type"

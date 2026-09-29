@@ -80,10 +80,13 @@ def test_import_enrols_invites_and_skips(people):
     assert reasons == {"carl": "already in the class", "prof": "is a teacher account",
                        "bad name": "not a valid username", "alice": "listed twice"}
     assert classes.membership(cls["class_id"], "new.student")["status"] == "invited"
-    # registering later accepts the invitation
+    # registering alone does not make a member (anyone could register that
+    # name first); joining with the class code accepts the invitation
     accounts.register("new.student", "studentpass", "student")
-    assert classes.claim_invites("new.student") == [cls["class_id"]]
-    assert classes.is_member(cls["class_id"], "new.student")
+    assert not classes.is_member(cls["class_id"], "new.student")
+    classes.join_class(cls["join_code"], "new.student")
+    row = classes.membership(cls["class_id"], "new.student")
+    assert row["status"] == "active" and row["added_via"] == "import"
 
 
 def test_roster_file_needs_a_username_column():

@@ -19,7 +19,7 @@ import streamlit as st
 from classroom import paths
 from ui import common, lab
 
-st.set_page_config(page_title="MarkText Classroom", page_icon="static/mark.svg", layout="wide",
+st.set_page_config(page_title="MarkText Classroom", page_icon=common.MARK, layout="wide",
                    initial_sidebar_state="expanded")
 common.init_state()
 lab.init_state()
@@ -32,7 +32,8 @@ except ValueError as exc:
     st.stop()
 paths.ensure_dirs()
 lab.ensure_dirs()
-st.logo("static/mark.svg", size="large")
+st.logo(common.MARK, size="large")
+common.check_idle(config)
 
 user = common.current_user()
 nav = st.navigation(common.pages_for(user), position="sidebar" if user else "hidden")

@@ -17,8 +17,11 @@ rule existed still sign in; the app then asks them to change it.
 
 import hashlib
 import hmac
+import math
 import re
 import secrets
+import threading
+import time
 
 from classroom import paths, store
 
@@ -27,7 +30,17 @@ ALGORITHM = "pbkdf2_sha256"
 ITERATIONS = 600_000
 MIN_PASSWORD = 8
 MAX_DISPLAY_NAME = 60
-USERNAME_RULE = re.compile(r"[a-z0-9][a-z0-9_.-]{2,23}")
+# 3 to 24 characters; the first and the last are a letter or a digit, because
+# a username is also a folder name and Windows drops a trailing dot ("alice."
+# would share the folder of "alice")
+USERNAME_RULE = re.compile(r"[a-z0-9](?:[a-z0-9_.-]{1,22}[a-z0-9])")
+# names Windows keeps for devices, with or without an extension ("nul.txt")
+WINDOWS_RESERVED = frozenset(["con", "prn", "aux", "nul"] + ["com%d" % i for i in range(1, 10)]
+                             + ["lpt%d" % i for i in range(1, 10)])
+# sign-in throttling, per account name, kept in memory (a restart clears it)
+MAX_FAILURES = 5            # wrong passwords allowed within FAILURE_WINDOW
+FAILURE_WINDOW = 15 * 60    # seconds
+PAUSE = 30                  # seconds to wait after that, and after every further failure
 EMPTY = {"version": 1, "users": {}}
 # refused as new passwords, flagged at sign-in: the most common passwords of
 # eight characters or more, and the demo password older versions printed
@@ -70,7 +83,9 @@ def normalise_username(text):
 def validate_username(username):
     if not USERNAME_RULE.fullmatch(username):
         raise ValueError("Usernames are 3 to 24 characters: lowercase letters, digits, dots, "
-                         "dashes or underscores, starting with a letter or a digit.")
+                         "dashes or underscores, starting and ending with a letter or a digit.")
+    if username.split(".")[0] in WINDOWS_RESERVED:
+        raise ValueError("{} is a name Windows keeps for a device; choose another.".format(username))
 
 
 def password_problem(password, username=""):
@@ -111,9 +126,12 @@ def _users():
 
 
 # --------------------------------------------------------------- operations
-def register(username, password, role, display_name=""):
+def register(username, password, role, display_name="", first_teacher=False):
     """Create an account and return its public record. ValueError explains
-    any rule that was broken (taken name, weak password, unknown role)."""
+    any rule that was broken (taken name, weak password, unknown role).
+    first_teacher=True (the setup screen) refuses when a teacher exists; the
+    check and the write happen under one lock, so two browsers on the setup
+    screen cannot both create a teacher."""
     username = normalise_username(username)
     validate_username(username)
     if role not in ROLES:
@@ -127,6 +145,8 @@ def register(username, password, role, display_name=""):
               "created_at": store.now(), "last_login": ""}
 
     def add(data):
+        if first_teacher and any(r.get("role") == "teacher" for r in data["users"].values()):
+            raise ValueError("A teacher account already exists. Sign in instead.")
         if username in data["users"]:
             raise ValueError("The username {} is already taken.".format(username))
         data["users"][username] = record
@@ -134,16 +154,56 @@ def register(username, password, role, display_name=""):
     return public(username, record)
 
 
+class TooManyAttempts(ValueError):
+    """Sign-in refused for a while after too many wrong passwords."""
+
+
+_failures = {}
+_failures_guard = threading.Lock()
+_dummy = {}
+
+
+def _dummy_hash():
+    """What a missing account's password is checked against, so a wrong
+    username takes as long as a wrong password: the time of a failed
+    sign-in does not reveal which usernames exist."""
+    return _dummy.setdefault(ITERATIONS, hash_password("no such account", b"marktext-no-user"))
+
+
+def _pause_left(username, now):
+    recent = [t for t in _failures.get(username, []) if now - t < FAILURE_WINDOW]
+    _failures[username] = recent
+    if len(recent) >= MAX_FAILURES:
+        return max(0.0, PAUSE - (now - recent[-1]))
+    return 0.0
+
+
 def authenticate(username, password):
-    """The public record when the password matches, else None. A successful
-    sign-in records last_login (an atomic write; no backup copy is kept for
-    this routine field). When users.json cannot be written just then (open
-    in another program), the person is still signed in: a timestamp is not
-    worth locking someone out for."""
+    """The public record when the password matches, else None.
+
+    After MAX_FAILURES wrong passwords for one username within
+    FAILURE_WINDOW, every attempt waits PAUSE seconds after the last
+    failure (TooManyAttempts, which says how long), which makes guessing
+    passwords slow. The count is the same for names that do not exist.
+
+    A successful sign-in records last_login (an atomic write; no backup copy
+    is kept for this routine field). When users.json cannot be written just
+    then (open in another program), the person is still signed in: a
+    timestamp is not worth locking someone out for."""
     username = normalise_username(username)
+    with _failures_guard:
+        wait = _pause_left(username, time.monotonic())
+    if wait > 0:
+        raise TooManyAttempts("Too many wrong passwords for {}. Wait {} seconds and try again.".format(
+            username or "this account", math.ceil(wait)))
     record = _users().get(username)
-    if record is None or not verify_password(password or "", record.get("password", "")):
+    stored = record.get("password", "") if record else _dummy_hash()
+    if not verify_password(password or "", stored) or record is None:
+        with _failures_guard:
+            _failures.setdefault(username, []).append(time.monotonic())
         return None
+    with _failures_guard:
+        _failures.pop(username, None)
 
     def touch(data):
         data["users"][username]["last_login"] = store.now()

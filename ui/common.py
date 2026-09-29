@@ -12,6 +12,7 @@ import functools
 import logging
 import re
 import threading
+import time
 
 import streamlit as st
 
@@ -20,6 +21,10 @@ import verdict
 from classroom import accounts, paths, reports, reviews, store, submissions
 
 log = logging.getLogger("marktext")
+
+# absolute, so the app also starts from another working folder
+STATIC_DIR = paths.BASE_DIR / "static"
+MARK = str(STATIC_DIR / "mark.svg")
 
 # ------------------------------------------------------------------ state
 DEFAULTS = {
@@ -31,6 +36,8 @@ DEFAULTS = {
     "config_notes": [],         # what the config loader reported this session
     "notes_dismissed": [],
     "weak_password": False,     # signed in with a password that should be changed
+    "last_seen": None,          # time of the last interaction, for the idle sign-out
+    "review_drafts": {},        # review id -> unsaved decision and note
     "open_class_id": None,      # Classes page: the class that is open
     "open_assignment_id": None, # student Assignment page
     "review_class": None,       # Review page selectors
@@ -121,6 +128,25 @@ def require_role(role):
 def sign_in(user):
     st.session_state["user"] = user
     st.session_state["goto"] = None
+    st.session_state["last_seen"] = time.time()
+
+
+def idle_minutes(config):
+    return int(config.get("classroom", {}).get("idle_minutes", 30))
+
+
+def check_idle(config):
+    """Sign out a tab that has been idle for longer than the configured
+    minutes (0 = never), then count this interaction. A classroom laptop
+    left open must not stay signed in as the teacher."""
+    state = st.session_state
+    limit = idle_minutes(config)
+    now = time.time()
+    if state.get("user") and limit and state.get("last_seen") and now - state["last_seen"] > limit * 60:
+        sign_out()
+        init_state()
+        flash("You were signed out after {} minutes without activity.".format(limit), ":material/timer:")
+    state["last_seen"] = now
 
 
 def sign_out():
@@ -309,15 +335,15 @@ def problem(exc):
     data file that is damaged, missing or locked). The traceback goes to
     the server's log, not to the browser."""
     log.exception("page stopped")
-    st.error(str(exc) if isinstance(exc, ValueError) else
-             "A file could not be read or written: {}".format(exc), icon=":material/error:")
+    st.error(md(str(exc)) if isinstance(exc, ValueError) else
+             "A file could not be read or written: {}".format(md(exc)), icon=":material/error:")
     st.caption("Nothing was changed. Close the file if another program has it open, or restore "
                "it from data/backups, then reload the page.")
 
 
 def show_flash():
     for message, icon in st.session_state.get("flash", []):
-        st.toast(message, icon=icon)
+        st.toast(md(message), icon=icon)       # messages quote names, titles and codes
     st.session_state["flash"] = []
 
 
@@ -397,6 +423,20 @@ def _escape(text):
     return _MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
 
 
+_INLINE_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>!$~|])")
+
+
+def md(text):
+    """User-written text inside one line of Markdown (a name, a title, a
+    note, a message): shown literally, never as a link, an image, bold,
+    HTML or a formula. A student's display name reaches the teacher's
+    pages, so "![x](http://...)" must stay text."""
+    text = _INLINE_SPECIAL.sub(r"\\\1", str(text or ""))
+    text = re.sub(r"^([#+\-])", r"\\\1", text)          # would start a heading or a list
+    text = re.sub(r"^(\d+)\.", r"\1\\.", text)          # "1." would start a numbered list
+    return " ".join(text.split())
+
+
 def plain(text):
     """Show user-written text literally in st.markdown (no accidental bold,
     links or formulas) while keeping its line breaks."""
@@ -468,7 +508,7 @@ def submission_text(sub):
     try:
         return submissions.read_text(sub)
     except ValueError as exc:
-        st.warning(str(exc), icon=":material/warning:")
+        st.warning(md(str(exc)), icon=":material/warning:")
         return None
 
 
@@ -485,8 +525,8 @@ def sidebar_footer(user):
     with st.sidebar:
         st.space("small")
         with st.container(border=True):
-            st.markdown("**{}**".format(user["display_name"]))
-            st.caption("{} · {}".format(user["username"], user["role"].capitalize()))
+            st.markdown("**{}**".format(md(user["display_name"])))
+            st.caption("{} · {}".format(md(user["username"]), user["role"].capitalize()))
             st.button("Sign out", icon=":material/logout:", key="sign_out", on_click=sign_out,
                       type="tertiary")
         if MODEL["loaded"]:

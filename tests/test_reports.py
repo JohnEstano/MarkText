@@ -156,3 +156,14 @@ def test_a_decision_changed_after_return_counts_as_decided_again(five_states):
     shown = reports.student_overview("alice")[0]
     assert (shown["my_state"], shown["decision"], shown["note"]) == ("returned", "flagged", "Talk to me")
 
+
+def test_a_flag_on_an_earlier_version_stays_visible(course):
+    eng, lock = FakeEngine(), threading.Lock()
+    aid = course["assignment"]["assignment_id"]
+    first = submissions.submit(aid, "alice", "wm " * 150)
+    rev = detection.detect_submission(eng, lock, first, "prof")
+    reviews.decide(rev["review_id"], "flagged", "Drafted?", "prof")
+    submissions.submit(aid, "alice", "a new version by a person " * 20)
+    frame = reports.assignment_frame(aid)
+    assert bool(frame.loc[frame["username"] == "alice", "earlier_flag"].iloc[0])
+    assert frame.loc[frame["username"] == "alice", "state"].iloc[0] == "awaiting detection"

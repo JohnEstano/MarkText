@@ -1,6 +1,9 @@
 # MarkText is a local-only demo: listen on this machine only, not the LAN.
 [server]
 address = "localhost"
+# answer only to these host names (protects against DNS rebinding); add the
+# machine's name or address here before serving the app on a network
+allowedHosts = ["localhost", "127.0.0.1"]
 headless = true
 # Streamlit's source watcher walks every imported module; transformers lazily
 # imports optional vision modules and logs a traceback for each missing one.
@@ -14,6 +17,10 @@ gatherUsageStats = false
 
 [client]
 toolbarMode = "minimal"
+# an unexpected error shows its type in the browser, never its traceback or
+# message (they may contain file paths or data); the terminal has the details.
+# For development: streamlit run app.py --client.showErrorDetails full
+showErrorDetails = "type"
 
 # The same tokens as the web site (web/src/app/globals.css on the
 # web-platform branch): one neutral family, one desaturated green accent,

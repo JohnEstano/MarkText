@@ -112,3 +112,19 @@ def test_a_missing_text_file_raises_missing_text(course):
     paths.resolve(row["text_path"]).unlink()
     with pytest.raises(submissions.MissingText, match="missing"):
         submissions.read_text(row)
+
+
+def test_an_archived_class_takes_no_more_work(course):
+    classes.set_archived(course["class"]["class_id"], True)
+    with pytest.raises(ValueError, match="archived"):
+        submissions.submit(course["assignment"]["assignment_id"], "alice", "an essay " * 20)
+
+
+def test_a_text_edited_after_hand_in_is_noticed(course):
+    row = submissions.submit(course["assignment"]["assignment_id"], "alice", "Line one.\nLine two.")
+    path = paths.resolve(row["text_path"])
+    assert submissions.intact(row)
+    path.write_bytes("\ufeffLine one.\r\nLine two.\r\n".encode("utf-8"))    # saved again, unchanged
+    assert submissions.intact(row)
+    path.write_text("Line one.\nLine two, improved.", encoding="utf-8")
+    assert not submissions.intact(row)

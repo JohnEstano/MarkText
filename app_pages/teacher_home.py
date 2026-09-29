@@ -27,7 +27,7 @@ def load_demo(password):
                                      password=password)
         except ValueError as exc:
             status.update(label="The demo class could not be built", state="error")
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
             return
         status.update(label="Demo class ready", state="complete")
     if summary["accounts_created"]:
@@ -59,7 +59,7 @@ def demo_dialog():
         try:
             accounts.validate_password(password)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             state["demo_request"] = password
             state.pop("_demo_suggestion", None)
@@ -72,7 +72,7 @@ today = datetime.date.today()
 # ----------------------------------------------------------------- header
 with st.container(horizontal=True, vertical_alignment="bottom"):
     with st.container():
-        st.title("Hello, {}".format(common.first_name(user)), anchor=False)
+        st.title("Hello, {}".format(common.md(common.first_name(user))), anchor=False)
         st.caption("Home · {}".format(today.strftime("%A, %B %d").replace(" 0", " ")))
     if overview["classes"]:
         st.button("New class", type="primary", icon=":material/add:", on_click=common.open_dialog,
@@ -132,9 +132,9 @@ with left.container(border=True, height="stretch"):
         st.caption("Nothing waiting. New submissions appear here.")
     for item in overview["queue"]:
         with st.container(border=True):
-            st.markdown("**{}**".format(item["title"]))
+            st.markdown("**{}**".format(common.md(item["title"])))
             due = " · due {}".format(common.day(item["due_at"])) if item["due_at"] else ""
-            st.caption("{}{}".format(item["class_name"], due))
+            st.caption("{}{}".format(common.md(item["class_name"]), due))
             with st.container(horizontal=True, vertical_alignment="center"):
                 if item["awaiting_detection"]:
                     st.badge("{} not scored".format(item["awaiting_detection"]), color="blue",
@@ -166,12 +166,12 @@ with left.container(border=True, height="stretch"):
     for flag in overview["recent_flags"]:
         with st.container(border=True):
             with st.container(horizontal=True, vertical_alignment="center"):
-                st.markdown("**{}**".format(flag["student"]))
+                st.markdown("**{}**".format(common.md(flag["student"])))
                 if flag["decision"] == "flagged":
                     common.decision_badge("flagged")
                 else:
                     common.verdict_badge(flag["label"])
-            st.caption("{} · version {} · {}".format(flag["assignment"], flag["version"],
+            st.caption("{} · version {} · {}".format(common.md(flag["assignment"]), flag["version"],
                                                      common.when(flag["detected_at"])))
             st.button("View", key="home_flag_{}".format(flag["review_id"]), icon=":material/visibility:",
                       on_click=common.open_review,

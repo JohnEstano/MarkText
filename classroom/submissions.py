@@ -69,6 +69,9 @@ def submit(assignment_id, username, text, source="editor", upload_filename="",
     if assignment["status"] != "open":
         raise ValueError("This assignment is closed; your teacher is no longer accepting "
                          "submissions.")
+    record = classes.get_class(assignment["class_id"])
+    if record is None or record.get("archived"):
+        raise ValueError("This class is archived; it no longer accepts work.")
     if not classes.is_member(assignment["class_id"], username):
         raise ValueError("You are not in the class for this assignment.")
     if source not in SOURCES:
@@ -147,6 +150,16 @@ def read_text(submission):
     with store.file_errors(path, "read"):
         with open(path, "r", encoding="utf-8-sig") as f:
             return f.read()
+
+
+def intact(submission):
+    """True when the text file still holds what was handed in: the SHA-256
+    of its text equals the one written in the index at hand-in. False means
+    it was edited outside MarkText. (A file saved again unchanged, even with
+    Windows line ends or a byte-order mark, still matches.) Raises
+    MissingText when the file is gone."""
+    text = normalise_text(read_text(submission))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() == submission["sha256"]
 
 
 def sidecar(submission):

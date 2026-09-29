@@ -23,7 +23,7 @@ dev = ["pytest>=8"]
 marktext = "main:main"
 
 [tool.setuptools]
-py-modules = ["main", "app", "engine", "scorer", "history", "config", "experiment", "verdict"]
+py-modules = ["main", "app", "engine", "scorer", "locks", "history", "config", "experiment", "verdict"]
 packages = ["classroom", "ui"]
 
 [tool.setuptools.package-data]

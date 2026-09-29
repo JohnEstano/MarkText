@@ -410,3 +410,50 @@ def test_a_passage_that_decided_the_verdict_is_highlighted(new_app, school):
     shown = " ".join(m.value for m in at.markdown)
     assert r":orange-background[The assistant wrote this part\." in shown
     assert any("The verdict comes from this passage" in c.value for c in at.caption)
+
+
+def test_a_display_name_is_shown_as_text_not_markdown(new_app, school):
+    accounts.rename("alice", "![x](http://example.com/p.png) **Alice**")
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", "wm " * 150)
+    detection.detect_submission(FakeEngine(), threading.Lock(), sub, "prof")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    shown = " ".join(m.value for m in at.markdown)
+    assert r"\!\[x\]\(http://example.com/p.png\) \*\*Alice\*\*" in shown
+    assert "![x](" not in shown
+
+
+def test_an_idle_tab_is_signed_out(new_app, school):
+    at = sign_in(new_app(), "prof", "teacherpass")
+    at.session_state["last_seen"] -= 31 * 60
+    ok(at.run())
+    assert titles(at) == ["MarkText Classroom"]
+    assert any("without activity" in t.value for t in at.toast)
+
+
+def test_the_review_page_warns_about_a_changed_text(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    paths.resolve(sub["text_path"]).write_text(ESSAY + " Added later.", encoding="utf-8")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    assert any("changed after it was handed in" in w.value for w in at.warning)
+
+
+def test_an_unsaved_note_survives_looking_at_another_student(new_app, school, people):
+    classes.join_class(school["class"]["join_code"], "ben")
+    aid = school["assignment"]["assignment_id"]
+    eng, lock = FakeEngine(), threading.Lock()
+    rids = {}
+    for who in ("alice", "ben"):
+        sub = submissions.submit(aid, who, ESSAY)
+        rids[who] = detection.detect_submission(eng, lock, sub, "prof")["review_id"]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.selectbox(key="_pick_review_pick").set_value("alice").run())
+    ok(at.text_area(key="note_" + rids["alice"]).input("Half a thought").run())
+    ok(at.selectbox(key="_pick_review_pick").set_value("ben").run())
+    ok(at.selectbox(key="_pick_review_pick").set_value("alice").run())
+    assert at.text_area(key="note_" + rids["alice"]).value == "Half a thought"
+    assert any("Not saved yet" in c.value for c in at.caption)
+    assert reviews.get_review(rids["alice"])["note"] == ""

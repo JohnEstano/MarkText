@@ -9,8 +9,10 @@ The same rules history.py follows, in one place:
 - A file with an unexpected header is never "fixed" silently: ValueError.
   A header that is an older, shorter version of the columns is extended
   (backup first), so a column can be added later without losing data.
-- One re-entrant lock per file serialises read-modify-write inside this
-  process; Streamlit runs every browser session as a thread of one process.
+- One lock per file serialises read-modify-write (locks.py): a thread lock
+  between browser tabs, which Streamlit runs as threads of one process, and
+  a lock file while writing, so the command-line tools and the desktop app,
+  which are other processes, wait their turn too.
 - Files are read as "utf-8-sig": a file saved back by Excel or Notepad may
   start with a byte-order mark, which would otherwise glue itself to the
   first column name. Files are written without one.
@@ -27,24 +29,47 @@ import datetime
 import errno
 import io
 import json
-import os
 import pathlib
+import re
 import shutil
 import threading
 import uuid
 
+import locks
 from classroom import paths
 
 _LOCKS = {}
 _LOCKS_GUARD = threading.Lock()
 
 
+class _Lock:
+    """`with lock_for(path):` around a change; `with lock_for(path).reading():`
+    around a read. Re-entrant, so an operation that holds it can call the
+    helpers below, which take it again."""
+
+    def __init__(self, path):
+        self.path = pathlib.Path(path)
+        self.file_lock = locks.lock_for(path)
+
+    def reading(self):
+        return self.file_lock.reading()
+
+    def __enter__(self):
+        try:
+            self.file_lock.acquire()
+        except locks.Busy as exc:
+            raise FileProblem(self.path, "change", exc) from exc
+        return self
+
+    def __exit__(self, *exc):
+        self.file_lock.release()
+
+
 def lock_for(path):
-    """The lock for one file. Re-entrant, so an operation that holds it can
-    call the helpers below, which take it again."""
+    """The lock for one file (one object per file in this process)."""
     key = str(pathlib.Path(path).resolve()).lower()
     with _LOCKS_GUARD:
-        return _LOCKS.setdefault(key, threading.RLock())
+        return _LOCKS.setdefault(key, _Lock(path))
 
 
 def now():
@@ -158,9 +183,13 @@ def parse_date(value):
 
 
 # ------------------------------------------------------------------ backups
+KEEP_BACKUPS = 30       # newest copies kept per data file
+
+
 def backup(path):
     """Copy a file into data/backups/ before it is rewritten. Microseconds in
-    the name, so two rewrites in the same second keep both copies."""
+    the name, so two rewrites in the same second keep both copies. Only the
+    newest KEEP_BACKUPS copies of each file are kept (prune_backups)."""
     path = pathlib.Path(path)
     if not path.exists():
         return None
@@ -169,7 +198,29 @@ def backup(path):
     with file_errors(target, "write the backup copy"):
         paths.backups_dir().mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
+    prune_backups(path.stem, path.suffix)
     return target
+
+
+def backups_of(stem, suffix):
+    """Backup copies of one data file, oldest first (the names sort by time)."""
+    pattern = re.compile(r"{}_\d{{8}}_\d{{6}}_\d{{6}}{}".format(re.escape(stem), re.escape(suffix)))
+    folder = paths.backups_dir()
+    if not folder.exists():
+        return []
+    return sorted(p for p in folder.iterdir() if pattern.fullmatch(p.name))
+
+
+def prune_backups(stem, suffix, keep=None):
+    """Delete all but the newest `keep` copies of one data file. Without a
+    limit the folder grows with every decision, and old copies of
+    users.json would keep old password hashes for ever."""
+    keep = KEEP_BACKUPS if keep is None else keep
+    for old in backups_of(stem, suffix)[:-keep]:
+        try:
+            old.unlink()
+        except OSError:
+            pass                                  # a copy open elsewhere goes next time
 
 
 def _replace(path, write):
@@ -180,7 +231,7 @@ def _replace(path, write):
         path.parent.mkdir(parents=True, exist_ok=True)
         try:
             write(tmp)
-            os.replace(tmp, path)
+            locks.replace(tmp, path)
         finally:
             if tmp.exists():                  # only after a failed write
                 tmp.unlink()
@@ -192,7 +243,7 @@ def read_json(path, default):
     yet. A damaged file raises ValueError naming it; it is never replaced
     silently, because it holds accounts or classes."""
     path = pathlib.Path(path)
-    with lock_for(path):
+    with lock_for(path).reading():
         if not path.exists() or path.stat().st_size == 0:
             return copy.deepcopy(default)
         try:
@@ -232,30 +283,51 @@ def update_json(path, default, change, keep_backup=True):
 
 
 # ----------------------------------------------------------------------- CSV
-def _write_csv(target, columns, rows):
+def _write_csv(target, columns, rows, cell=None):
+    cell = cell or _cell
     with open(target, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(columns))
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: _cell(row.get(k, "")) for k in columns})
+            writer.writerow({k: cell(row.get(k, "")) for k in columns})
 
 
 def _cell(value):
     return "" if value is None else value
 
 
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def spreadsheet_cell(value):
+    """A cell for a file that people open in a spreadsheet (reports and
+    exports, never the data files): text that starts like a formula gets a
+    leading apostrophe, so Excel shows it instead of running it. A student
+    named "=HYPERLINK(...)" stays a name ("CSV injection", OWASP). Numbers,
+    including negative ones, are left alone."""
+    value = _cell(value)
+    if not isinstance(value, str) or not value.startswith(FORMULA_START):
+        return value
+    try:
+        float(value)
+        return value
+    except ValueError:
+        return "'" + value
+
+
 def ensure_csv(path, columns):
     """Create the file with its header, or check the header it has."""
     path = pathlib.Path(path)
     columns = list(columns)
-    with lock_for(path):
-        if not path.exists() or path.stat().st_size == 0:
-            _replace(path, lambda tmp: _write_csv(tmp, columns, []))
+    with lock_for(path).reading():
+        if _header(path) == columns:
             return
-        with file_errors(path, "read"):
-            with open(path, "r", newline="", encoding="utf-8-sig") as f:
-                header = next(csv.reader(f), [])
+    with lock_for(path):
+        header = _header(path)
         if header == columns:
+            return
+        if header is None:
+            _replace(path, lambda tmp: _write_csv(tmp, columns, []))
             return
         if header and header == columns[:len(header)]:
             # an older layout without the newest columns: extend it
@@ -270,10 +342,19 @@ def ensure_csv(path, columns):
                                                                         columns))
 
 
+def _header(path):
+    """The first row of a CSV file, or None when it does not exist or is empty."""
+    if not path.exists() or path.stat().st_size == 0:
+        return None
+    with file_errors(path, "read"):
+        with open(path, "r", newline="", encoding="utf-8-sig") as f:
+            return next(csv.reader(f), [])
+
+
 def read_rows(path, columns):
     """All rows in file order, as dicts of strings."""
     path = pathlib.Path(path)
-    with lock_for(path):
+    with lock_for(path).reading():
         ensure_csv(path, columns)
         with file_errors(path, "read"):
             with open(path, "r", newline="", encoding="utf-8-sig") as f:
@@ -369,15 +450,16 @@ def csv_text(columns, rows):
     writer = csv.DictWriter(buffer, fieldnames=list(columns))
     writer.writeheader()
     for row in rows:
-        writer.writerow({k: _cell(row.get(k, "")) for k in columns})
+        writer.writerow({k: spreadsheet_cell(row.get(k, "")) for k in columns})
     return buffer.getvalue()
 
 
 def write_new_csv(path, columns, rows):
-    """A new CSV file (reports, exports). Written to a temp name first, so a
-    half-written report never appears under its final name."""
+    """A new CSV file (reports, exports), with spreadsheet-safe cells.
+    Written to a temp name first, so a half-written report never appears
+    under its final name."""
     path = pathlib.Path(path)
     if path.exists():
         raise FileProblem(path, "create", FileExistsError(errno.EEXIST, "it already exists"))
-    _replace(path, lambda tmp: _write_csv(tmp, columns, rows))
+    _replace(path, lambda tmp: _write_csv(tmp, columns, rows, spreadsheet_cell))
     return path

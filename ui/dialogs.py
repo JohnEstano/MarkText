@@ -29,7 +29,7 @@ def create_class(teacher):
         try:
             record = classes.create_class(name, teacher, term)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             st.session_state["open_class_id"] = record["class_id"]
             common.go("app_pages/teacher_classes.py")
@@ -53,7 +53,7 @@ def create_assignment(class_id, teacher):
         try:
             assignments.create_assignment(class_id, title, instructions, due or "", teacher)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             common.finish_dialog("Assignment created. Students in the class can see it now.",
                                  ":material/assignment:")
@@ -70,7 +70,7 @@ def rotate_code(class_id, teacher):
         try:
             code = classes.rotate_join_code(class_id, by=teacher)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             common.finish_dialog("The new join code is {}.".format(classes.format_code(code)),
                                  ":material/key:")
@@ -88,7 +88,7 @@ def archive_class(class_id, teacher):
         try:
             classes.set_archived(class_id, True, by=teacher)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             st.session_state["open_class_id"] = None
             common.finish_dialog("Class archived.", ":material/archive:")
@@ -97,7 +97,7 @@ def archive_class(class_id, teacher):
 @st.dialog("Remove this student?", icon=":material/person_remove:", on_dismiss=common.close_dialog)
 def remove_student(class_id, username, teacher):
     st.write("**{}** leaves the class. Their submissions and your reviews stay on file, and the "
-             "roster keeps a row marked removed.".format(common.display_name(username)))
+             "roster keeps a row marked removed.".format(common.md(common.display_name(username))))
     with st.form("remove_student", border=False):
         cancel, confirm = _buttons("remove_cancel", "Remove student", "remove_confirm")
     if cancel:
@@ -106,7 +106,7 @@ def remove_student(class_id, username, teacher):
         try:
             classes.remove_student(class_id, username, by=teacher)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             common.finish_dialog("{} was removed from the class.".format(common.display_name(username)),
                                  ":material/person_remove:")
@@ -117,7 +117,7 @@ def remove_student(class_id, username, teacher):
 def return_work(review_id, teacher):
     review = reviews.get_review(review_id)
     st.write("**{}** will see your decision, **{}**, and your note. The detector's numbers stay "
-             "on your side.".format(common.display_name(review["username"]),
+             "on your side.".format(common.md(common.display_name(review["username"])),
                                     common.decision_text(review["decision"])))
     shown = reviews.shown_to_student(review)
     if shown:
@@ -131,7 +131,7 @@ def return_work(review_id, teacher):
         try:
             reviews.return_to_student(review_id, by=teacher)
         except ValueError as exc:
-            st.error(str(exc), icon=":material/error:")
+            st.error(common.md(str(exc)), icon=":material/error:")
         else:
             common.finish_dialog("Returned to {}.".format(common.display_name(review["username"])),
                                  ":material/assignment_return:")

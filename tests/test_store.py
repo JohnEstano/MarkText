@@ -163,3 +163,30 @@ def test_timestamps_as_excel_writes_them():
     assert store.parse_time("9/29/2026 14:05") == datetime.datetime(2026, 9, 29, 14, 5)
     assert store.parse_time("2026-09-29 14:05:12") == datetime.datetime(2026, 9, 29, 14, 5, 12)
     assert store.parse_time("soon") is None
+
+
+@pytest.mark.parametrize("value, shown", [
+    ("=HYPERLINK(\"http://x\")", "'=HYPERLINK(\"http://x\")"), ("+1 555", "'+1 555"), ("@sum", "'@sum"),
+    ("-note", "'-note"), ("-0.53", "-0.53"), ("+4", "+4"), (-0.53, -0.53), ("Alice", "Alice"), (None, ""),
+])
+def test_spreadsheet_cells(value, shown):
+    assert store.spreadsheet_cell(value) == shown
+
+
+def test_exports_are_spreadsheet_safe_and_data_files_are_not(data_dir):
+    rows = [{"name": "=cmd|' /C calc'!A0", "z": -1.2}]
+    report = store.write_new_csv(data_dir / "reports" / "r.csv", ["name", "z"], rows)
+    assert report.read_text(encoding="utf-8").splitlines()[1] == "'=cmd|' /C calc'!A0,-1.2"
+    assert store.csv_text(["name", "z"], rows).splitlines()[1] == "'=cmd|' /C calc'!A0,-1.2"
+    store.rewrite_rows(data_dir / "d.csv", ["name", "z"], rows)       # a data file keeps the value
+    assert store.read_rows(data_dir / "d.csv", ["name", "z"])[0]["name"] == "=cmd|' /C calc'!A0"
+
+
+def test_only_the_newest_backups_are_kept(data_dir, monkeypatch):
+    monkeypatch.setattr(store, "KEEP_BACKUPS", 3)
+    path = data_dir / "classes.json"
+    for n in range(6):
+        store.write_json(path, {"n": n})
+    copies = store.backups_of("classes", ".json")
+    assert len(copies) == 3
+    assert [json.loads(c.read_text(encoding="utf-8"))["n"] for c in copies] == [2, 3, 4]

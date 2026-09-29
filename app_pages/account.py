@@ -26,7 +26,7 @@ with left:
                 try:
                     state["user"] = accounts.rename(record["username"], name)
                 except ValueError as exc:
-                    st.error(str(exc), icon=":material/error:")
+                    st.error(common.md(str(exc)), icon=":material/error:")
                 else:
                     common.flash("Name saved.")
                     st.rerun()
@@ -45,7 +45,7 @@ with right:
                         raise ValueError("The two new passwords do not match.")
                     accounts.change_password(record["username"], old, new)
                 except ValueError as exc:
-                    st.error(str(exc), icon=":material/error:")
+                    st.error(common.md(str(exc)), icon=":material/error:")
                 else:
                     state["weak_password"] = False
                     common.flash("Password changed.", ":material/lock_reset:")

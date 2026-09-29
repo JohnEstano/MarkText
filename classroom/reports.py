@@ -16,7 +16,7 @@ from classroom import accounts, assignments, classes, paths, reviews, store, sub
 STATES = ("not submitted", "awaiting detection", "awaiting decision", "decided", "returned")
 REPORT_COLUMNS = ["username", "display_name", "state", "version", "submitted_at", "source",
                   "words", "tokens_scored", "green_pct", "z_score", "label", "decision", "note",
-                  "returned", "returned_at"]
+                  "returned", "returned_at", "earlier_flag"]
 FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at"]
 SUMMARY_COLUMNS = ["assignment_id", "title", "due_at", "status", "students", "submitted",
                    "detected", "likely", "possible", "not_detected", "inconclusive", "accepted",
@@ -57,13 +57,24 @@ def assignment_frame(assignment_id):
          "decision", "note", "returned", "returned_at", "detected_at", "returned_decision",
          "returned_note"]]
 
+    # a resubmission becomes the current version, but a flag on an earlier
+    # version must not disappear with it
+    latest = reviews.latest_by_submission(assignment_id)
+    flagged_before = {s["username"] for s in submissions.list_submissions(assignment_id, current_only=False)
+                      if s["status"] == "superseded" and _flagged(latest.get(s["submission_id"]))}
+
     df = roster.merge(subs, on="username", how="left").fillna("")
     df = df.merge(revs, on="submission_id", how="left").fillna("")
     df["state"] = df.apply(_state, axis=1) if len(df) else pd.Series(dtype=str)
     for col in NUMERIC:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["returned"] = df["state"] == "returned"
+    df["earlier_flag"] = df["username"].isin(flagged_before)
     return df[FRAME_COLUMNS].sort_values("display_name", key=lambda s: s.str.lower()).reset_index(drop=True)
+
+
+def _flagged(review):
+    return bool(review) and (review["decision"] == "flagged" or review["label"] == verdict.LABEL_LIKELY)
 
 
 def state_counts(frame):

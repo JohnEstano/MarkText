@@ -126,3 +126,37 @@ def test_sign_in_works_while_users_json_is_open_elsewhere(data_dir, excel_lock):
     excel_lock(paths.users_path())
     user = accounts.authenticate("carol", "studentpass")
     assert user["username"] == "carol" and user["last_login"] == ""
+
+
+@pytest.mark.parametrize("name", ["alice.", "alice-", "_alice", "nul", "con.txt", "com1", "lpt9.x"])
+def test_usernames_that_windows_cannot_use_as_folders_are_refused(data_dir, name):
+    with pytest.raises(ValueError):
+        accounts.register(name, "studentpass", "student")
+
+
+def test_a_missing_account_costs_the_same_hashing_as_a_wrong_password(data_dir, monkeypatch):
+    checked = []
+    real = accounts.verify_password
+    monkeypatch.setattr(accounts, "verify_password", lambda pw, stored: checked.append(stored) or real(pw, stored))
+    assert accounts.authenticate("nobody", "whatever1") is None
+    assert len(checked) == 1 and checked[0].startswith("pbkdf2_sha256$1000$")
+
+
+def test_sign_in_pauses_after_repeated_wrong_passwords(data_dir, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(accounts.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(accounts, "_failures", {})
+    accounts.register("carol", "studentpass", "student")
+    for _ in range(accounts.MAX_FAILURES):
+        assert accounts.authenticate("carol", "wrong-guess") is None
+    with pytest.raises(accounts.TooManyAttempts, match="Wait 30 seconds"):
+        accounts.authenticate("carol", "studentpass")            # even the right one waits
+    clock[0] += accounts.PAUSE + 1
+    assert accounts.authenticate("carol", "studentpass")["username"] == "carol"
+    assert "carol" not in accounts._failures                      # success clears the count
+
+
+def test_the_setup_screen_cannot_make_a_second_teacher(data_dir):
+    accounts.register("reyes", "teacherpass", "teacher", first_teacher=True)
+    with pytest.raises(ValueError, match="already exists"):
+        accounts.register("other", "teacherpass", "teacher", first_teacher=True)

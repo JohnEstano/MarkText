@@ -110,11 +110,11 @@ record = classes.get_class(task["class_id"]) or {}
 with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="center"):
         with st.container():
-            st.subheader(task["title"], anchor=False)
+            st.subheader(common.md(task["title"]), anchor=False)
             due = "Due {}".format(common.day(task["due_at"])) if task["due_at"] else "No due date"
             if assignments.is_overdue(task) and task["status"] == "open":
                 due += " (past due)"
-            st.caption("{} · {}".format(record.get("name", ""), due))
+            st.caption("{} · {}".format(common.md(record.get("name", "")), due))
         if task["status"] == "open":
             st.badge("Open", color="green")
         else:
@@ -159,7 +159,7 @@ with write_col:
         st.text_area("Answer", key=editor_key, height=320, label_visibility="collapsed",
                      placeholder="Write your answer here.", on_change=sync_editor)
         words = len(state.get(editor_key, "").split())
-        origin = {"editor": "", "upload": " · from {}".format(state.get("upload_name_" + assignment_id, "a file")),
+        origin = {"editor": "", "upload": " · from {}".format(common.md(state.get("upload_name_" + assignment_id, "a file"))),
                   "assistant": " · started from an assistant draft"}.get(state[source_key], "")
         st.caption("{} words{}".format(words, origin))
         st.text_input("Note for your teacher (optional)", key="version_note_" + assignment_id,
@@ -190,7 +190,7 @@ with help_col:
                             int(length * 0.75), length / 4.3)):
                         info = assistant.draft(engine, lock, prompt, length)
                 except ValueError as exc:
-                    st.error(str(exc), icon=":material/error:")
+                    st.error(common.md(str(exc)), icon=":material/error:")
                 else:
                     state["assistant_draft"] = {"assignment_id": assignment_id, "text": info["text"],
                                                 "record": assistant.generation_record(info, prompt)}
@@ -210,4 +210,4 @@ with help_col:
                 st.markdown("**Version {}** · {} · {} words".format(
                     version["version"], common.when(version["submitted_at"]), version["words"]))
                 if version["version_note"]:
-                    st.caption(version["version_note"])
+                    st.caption(common.md(version["version_note"]))

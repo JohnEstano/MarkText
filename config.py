@@ -71,6 +71,8 @@ DEFAULT_CONFIG = {
         # the student's "Draft with the assistant" box; false hides it
         "assistant_enabled": True,
         "assistant_max_tokens": 300,
+        # sign a browser tab out after this many idle minutes (0 = never)
+        "idle_minutes": 30,
     },
 }
 
@@ -175,6 +177,9 @@ def validate_config(config):
     tokens = room.get("assistant_max_tokens")
     need(isinstance(tokens, int) and not isinstance(tokens, bool) and 50 <= tokens <= 2000,
          "classroom.assistant_max_tokens must be an integer from 50 to 2000")
+    idle = room.get("idle_minutes")
+    need(isinstance(idle, int) and not isinstance(idle, bool) and 0 <= idle <= 1440,
+         "classroom.idle_minutes must be an integer from 0 (never) to 1440")
 
 
 def load_config(path=None, notes=None):

@@ -4,8 +4,10 @@ data/classes.json holds one record per class: name, term, teacher and the
 join code students type to enrol. data/rosters.csv holds one row per
 (class, student) with a status:
 - active: the student is in the class;
-- invited: the teacher imported the username before the student registered;
-  registering turns the invitation into membership (claim_invites);
+- invited: the teacher imported the username before the student registered.
+  The student joins with the class code, which turns the invitation into
+  membership. A username alone is not enough: anyone could register it
+  first, so the code is the proof of being in the class;
 - removed: the teacher took the student out. Rows are never deleted, so the
   roster keeps its history; every status change is a backed-up rewrite.
 """
@@ -301,23 +303,6 @@ def import_roster(class_id, rows, by=None):
         if result["enrolled"] or result["invited"]:
             store.rewrite_rows(path, ROSTER_COLUMNS, all_rows)
     return result
-
-
-def claim_invites(username):
-    """Turn every invitation for this username into membership. Called right
-    after a student registers. Returns the class ids joined."""
-    username = accounts.normalise_username(username)
-    path = paths.rosters_path()
-    with store.lock_for(path):
-        rows = _rows()
-        joined = []
-        for row in rows:
-            if row["username"] == username and row["status"] == "invited":
-                row.update(status="active", joined_at=store.now())
-                joined.append(row["class_id"])
-        if joined:
-            store.rewrite_rows(path, ROSTER_COLUMNS, rows)
-    return joined
 
 
 def export_rows(class_id):

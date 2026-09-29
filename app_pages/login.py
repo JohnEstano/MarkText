@@ -2,9 +2,10 @@
 
 Reads and writes data/users.json through classroom.accounts: passwords are
 hashed there, never stored. A student who registers with a class code is
-enrolled right away; an invitation from an imported roster is accepted at
-registration and again at every sign-in, so one that could not be written
-the first time (rosters.csv open in Excel) is not lost.
+enrolled right away. A username the teacher imported before the student
+registered is an invitation; it becomes membership when the student joins
+with the class code, because anyone could register a username first, and
+the code is what shows the student is in the class.
 """
 
 import streamlit as st
@@ -22,19 +23,10 @@ def _enter(user, message, weak=False):
     st.rerun()
 
 
-def _claim(username):
-    """Accept waiting invitations; a file that cannot be written just now is
-    retried at the next sign-in."""
-    try:
-        return classes.claim_invites(username)
-    except ValueError:
-        return []
-
-
 _, middle, _ = st.columns([1, 1.25, 1])
 with middle:
     st.space("large")
-    st.image("static/mark.svg", width=52)
+    st.image(common.MARK, width=52)
     st.title("MarkText Classroom", anchor=False)
     st.caption("A class space for written work. Teachers can tell which submissions were "
                "drafted with MarkText's writing assistant.")
@@ -56,11 +48,10 @@ with middle:
                 try:
                     if password != repeat:
                         raise ValueError("The two passwords do not match.")
-                    if accounts.has_teacher():          # someone was quicker in another tab
-                        raise ValueError("A teacher account already exists. Sign in instead.")
-                    user = accounts.register(username, password, "teacher", name)
+                    # refused under the file's lock if another tab was quicker
+                    user = accounts.register(username, password, "teacher", name, first_teacher=True)
                 except ValueError as exc:
-                    st.error(str(exc), icon=":material/error:")
+                    st.error(common.md(str(exc)), icon=":material/error:")
                 else:
                     _enter(user, "Welcome, {}. Your classroom is ready.".format(user["display_name"]))
         st.stop()
@@ -75,16 +66,16 @@ with middle:
                 submitted = st.form_submit_button("Sign in", type="primary", width="stretch",
                                                   key="login_submit")
             if submitted:
-                user = accounts.authenticate(username, password)
-                if user is None:
-                    st.error("That username and password do not match.", icon=":material/error:")
+                try:
+                    user = accounts.authenticate(username, password)
+                except accounts.TooManyAttempts as exc:
+                    st.error(common.md(str(exc)), icon=":material/timer:")
                 else:
-                    joined = _claim(user["username"]) if user["role"] == "student" else []
-                    message = "Signed in as {}.".format(user["display_name"])
-                    if joined:
-                        message += " Your teacher added you to {} class{}.".format(
-                            len(joined), "" if len(joined) == 1 else "es")
-                    _enter(user, message, weak=accounts.is_weak(password, user["username"]))
+                    if user is None:
+                        st.error("That username and password do not match.", icon=":material/error:")
+                    else:
+                        _enter(user, "Signed in as {}.".format(user["display_name"]),
+                               weak=accounts.is_weak(password, user["username"]))
         else:
             st.caption("Students register here. Teachers get their account from the classroom's "
                        "administrator.")
@@ -92,10 +83,12 @@ with middle:
                 username = st.text_input("Username", placeholder="alice.santos",
                                          key="register_username",
                                          help="3 to 24 characters: lowercase letters, digits, dots, "
-                                              "dashes or underscores.")
+                                              "dashes or underscores; the first and the last are a "
+                                              "letter or a digit.")
                 name = st.text_input("Your name", placeholder="Alice Santos", key="register_name")
                 password = st.text_input("Password", type="password", key="register_password",
-                                         help="At least {} characters.".format(accounts.MIN_PASSWORD))
+                                         help="At least {} characters, not a common password and "
+                                              "without your username.".format(accounts.MIN_PASSWORD))
                 repeat = st.text_input("Repeat the password", type="password", key="register_repeat")
                 code = st.text_input("Class code (optional)", placeholder="ABC-234",
                                      key="register_code")
@@ -107,9 +100,8 @@ with middle:
                         raise ValueError("The two passwords do not match.")
                     user = accounts.register(username, password, "student", name)
                 except ValueError as exc:
-                    st.error(str(exc), icon=":material/error:")
+                    st.error(common.md(str(exc)), icon=":material/error:")
                 else:
-                    joined = _claim(user["username"])
                     message = "Account created."
                     if code.strip():
                         try:
@@ -117,6 +109,4 @@ with middle:
                             message = "Account created. You joined {}.".format(record["name"])
                         except ValueError as exc:
                             message = "Account created, but the class code did not work: {}".format(exc)
-                    elif joined:
-                        message = "Account created. Your teacher had already added you to a class."
                     _enter(user, message)

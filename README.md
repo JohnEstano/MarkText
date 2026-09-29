@@ -21,7 +21,7 @@ It runs on an ordinary laptop with no GPU and no cloud service.
 **Teacher**
 - Home page with what needs attention across all classes and the most recent flags
 - Classes with a join code (six characters, no look-alike letters), a new code on demand, archive and restore
-- Roster: students who joined with the code, a CSV roster import (registered students are enrolled, unknown usernames invited until they register), removal that keeps the history, and a roster export
+- Roster: students who joined with the code, a CSV roster import (registered students are enrolled; unknown usernames are invited and become members when they join with the class code, since anyone could register a name first), removal that keeps the history, and a roster export
 - Assignments with instructions and a due date; close and reopen
 - Review page: every student with their state (not submitted, not scored, scored, decided, returned), the submitted text and all earlier versions, scoring one or all submissions, the detector's numbers, a decision (accepted, flagged, needs review) with a note, and returning the work
 - Reports: the assignment table and a class summary, each saved as a new CSV and downloaded
@@ -108,7 +108,7 @@ The key never leaves the config file: generation results, sidecars, reports and 
 
 ## File handling
 
-Every write follows the same rules (`classroom/store.py`, `history.py`): paths come from `pathlib` anchored on the project folder; text files are opened with `encoding="utf-8"`; CSV files go through `csv.DictWriter`/`DictReader` with a fixed column list and `newline=""`; a rewrite first copies the old file to a backup, then writes a temporary file and swaps it in with `os.replace`, so a crash never leaves half a file; a file with unexpected columns is refused, not "repaired"; new files never overwrite old ones. One lock per file keeps two browser sessions from interleaving a read-modify-write.
+Every write follows the same rules (`classroom/store.py`, `history.py`): paths come from `pathlib` anchored on the project folder; text files are opened with `encoding="utf-8"`; CSV files go through `csv.DictWriter`/`DictReader` with a fixed column list and `newline=""`; a rewrite first copies the old file to a backup, then writes a temporary file and swaps it in with `os.replace`, so a crash never leaves half a file; a file with unexpected columns is refused, not "repaired"; new files never overwrite old ones. One lock per file keeps writers apart (`locks.py`): a thread lock between browser sessions, which Streamlit runs as threads of one process, and, while writing, a lock file next to the data file (`users.json.lock`, created with `O_CREAT | O_EXCL`), so the command-line tools, the desktop app and the experiment, which are other programs, wait their turn instead of losing each other's changes. Only the 30 newest backup copies of each file are kept, so the folder does not grow for ever and old copies of `users.json` do not keep old password hashes. Report and roster exports, which people open in a spreadsheet, prefix any text that starts like a formula (`=`, `+`, `-`, `@`) with an apostrophe, so a student named `=HYPERLINK(...)` stays a name; the data files keep values exactly as typed. Each hand-in records the SHA-256 of its text, and the review page warns when the text file no longer matches it.
 
 When a file cannot be read or written, for example a CSV that is open in Excel (which locks the files it opens), the page shows a message naming the file and nothing is left half-done: a hand-in that fails removes the two files it had just created, and scoring checks both the history log and `reviews.csv` before the detector runs and takes the log row back out if the review row still fails. Files are read with `encoding="utf-8-sig"`, so a file saved back by Excel or Notepad (which may add a byte-order mark) still reads, and dates in the forms Excel writes (`10/15/2026`) are understood. A damaged `config/watermark_config.json` stops the app with a message instead of being replaced, because a replacement would carry a new key and earlier texts would silently stop being detected.
 
@@ -118,7 +118,7 @@ What the teacher's actions do to the files:
 |---|---|---|---|---|
 | Sign in | `users.json` | | last sign-in | verifies the password hash |
 | Create a class, new join code | `classes.json` | `classes.json` (backup) | join code | makes a unique code |
-| Import a roster | the uploaded CSV, `users.json` | `rosters.csv` (one backed-up rewrite) | invited → active when the student registers | validates usernames: enrol, invite or skip |
+| Import a roster | the uploaded CSV, `users.json` | `rosters.csv` (one backed-up rewrite) | invited → active when the student joins with the code | validates usernames: enrol, invite or skip |
 | Export a roster | `rosters.csv`, `users.json` | `data/reports/roster_*.csv` | | joins names to usernames |
 | Remove a student | `rosters.csv` | backup | status → removed | exactly one row must match |
 | Create, close, reopen an assignment | `assignments.csv` | a row | status | |
@@ -223,7 +223,8 @@ Reading it: at 150 tokens the threshold of 4.0 catches 86 of 100 watermarked tex
 - Short texts give little evidence; below 100 scored tokens the verdict is INCONCLUSIVE.
 - Editing, paraphrasing or heavily rewriting a draft weakens or destroys the watermark, so a low score is not proof of independent work.
 - The key is a symmetric secret: leaking it allows forgery; rotating it orphans old texts (reviews say which key scored them).
-- Sign-in lasts for one browser tab: reloading the page signs you out. The files are meant for one server process; two servers on one `data/` folder are not supported.
+- Sign-in lasts for one browser tab: reloading the page signs you out, and so do 30 idle minutes (`classroom.idle_minutes` in the config). After five wrong passwords for one username, sign-in pauses for 30 seconds after each further failure; a wrong username takes as long as a wrong password, so failures do not reveal which accounts exist. These protect a classroom server, not a public website: there is no e-mail verification, and the server answers only on `localhost` unless you add a host to `server.allowedHosts` in `.streamlit/config.toml`.
+- Names, titles and notes that people type are shown as text, never as Markdown, so a display name cannot become a link or an image on the teacher's page.
 - Detection assumes independent scored positions. Repeated n-grams are counted once; overlapping n-grams still share tokens, so the z-score remains an approximation.
 - The underlying model generates from its own training data; MarkText does not claim ownership of it.
 

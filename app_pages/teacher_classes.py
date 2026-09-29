@@ -84,8 +84,8 @@ if current is None:
     for start in range(0, len(mine), 3):
         for column, record in zip(st.columns(3), mine[start:start + 3]):
             with column.container(border=True):
-                st.subheader(record["name"], anchor=False)
-                st.caption(record["term"] or "No term set")
+                st.subheader(common.md(record["name"]), anchor=False)
+                st.caption(common.md(record["term"]) or "No term set")
                 st.caption("Join code")
                 st.code(classes.format_code(record["join_code"]), language=None)
                 st.markdown(":material/group: {} students  ·  :material/assignment: {} open".format(
@@ -96,7 +96,7 @@ if current is None:
         with st.expander("Archived classes ({})".format(len(archived)), icon=":material/archive:"):
             for record in archived:
                 with st.container(horizontal=True, vertical_alignment="center"):
-                    st.markdown("**{}** · {}".format(record["name"], record["term"] or "no term"))
+                    st.markdown("**{}** · {}".format(common.md(record["name"]), common.md(record["term"]) or "no term"))
                     st.button("Restore", key="restore_" + record["class_id"], on_click=restore,
                               args=(record["class_id"],), icon=":material/unarchive:")
     common.render_dialogs({"create_class": dialogs.create_class})
@@ -108,8 +108,8 @@ st.button("All classes", icon=":material/arrow_back:", type="tertiary", on_click
           args=(None,), key="classes_back")
 with st.container(horizontal=True, vertical_alignment="bottom"):
     with st.container():
-        st.title(current["name"], anchor=False)
-        st.caption(current["term"] or "No term set")
+        st.title(common.md(current["name"]), anchor=False)
+        st.caption(common.md(current["term"]) or "No term set")
     with st.container(width="content"):
         st.caption("Join code")
         st.code(classes.format_code(current["join_code"]), language=None)
@@ -140,7 +140,7 @@ with roster_tab:
                            on_click=export_roster, args=(cid,), key="roster_export_" + cid)
     report = state.get("import_report")
     if report and report.get("class_id") == cid and report["skipped"]:
-        with st.expander("Skipped in {} ({})".format(report["file"], len(report["skipped"])),
+        with st.expander("Skipped in {} ({})".format(common.md(report["file"]), len(report["skipped"])),
                          icon=":material/info:", expanded=True):
             st.dataframe(pd.DataFrame(report["skipped"], columns=["username", "reason"]), hide_index=True)
     if not present:
@@ -187,7 +187,7 @@ with tasks_tab:
         scored = counts["awaiting decision"] + counts["decided"] + counts["returned"]
         with st.container(border=True, horizontal=True, vertical_alignment="center"):
             with st.container():
-                st.markdown("**{}**".format(task["title"]))
+                st.markdown("**{}**".format(common.md(task["title"])))
                 due = "Due {}".format(common.day(task["due_at"])) if task["due_at"] else "No due date"
                 if assignments.is_overdue(task) and task["status"] == "open":
                     due += " (past due)"

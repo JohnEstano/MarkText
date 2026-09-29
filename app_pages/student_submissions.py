@@ -63,7 +63,7 @@ with st.container(border=True):
     else:
         st.caption("A later version replaced this one.")
     if sub["version_note"]:
-        st.caption("Your note: {}".format(sub["version_note"]))
+        st.caption("Your note: {}".format(common.md(sub["version_note"])))
     with st.container(height=300, border=True):
         text = common.submission_text(sub)
         if text is not None:

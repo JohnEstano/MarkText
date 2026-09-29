@@ -49,3 +49,5 @@ data.archived_*/
 
 # Streamlit secrets (only needed for OIDC sign-in, not used yet)
 .streamlit/secrets.toml
+# lock files held while a data file is being changed (locks.py)
+*.lock
