@@ -4,6 +4,7 @@ exports and the assistant switch. No browser, no model."""
 
 import json
 import pathlib
+import threading
 
 import pytest
 from fakes import FakeEngine
@@ -11,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 
 import config as cfg
 import history
-from classroom import accounts, assignments, classes, paths, reviews, submissions
+from classroom import accounts, assignments, classes, detection, paths, reviews, submissions
 from ui import common, lab
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -117,7 +118,7 @@ def test_student_joins_with_a_code_and_hands_in_two_versions(new_app, people):
     task = assignments.create_assignment(cls["class_id"], "Diaries", "", "", "prof")
     aid = task["assignment_id"]
     at = sign_in(new_app(), "ben", "studentpass")
-    assert "You are not in a class yet" in [m.value for m in at.markdown][-2]
+    assert any("You are not in a class yet" in m.value for m in at.markdown)
     at.text_input(key="join_code").input(classes.format_code(cls["join_code"]).lower())
     ok(at.button(key="join_submit").click().run())
     assert classes.is_member(cls["class_id"], "ben")
@@ -252,3 +253,30 @@ def test_the_student_picker_follows_a_choice_made_elsewhere(new_app, school, peo
     at.session_state["review_pick"] = "ben"          # what the table's row click does
     ok(at.run())
     assert at.selectbox(key=picker).value == "ben"
+
+
+def test_teacher_home_with_two_scored_versions_of_one_student(new_app, school):
+    """Regression: a student with two scored versions crashed the home page
+    (two buttons with the same key). Only the current version counts now."""
+    eng, lock = FakeEngine(), threading.Lock()
+    aid = school["assignment"]["assignment_id"]
+    for text in ("wm " * 150, "wm " * 160):
+        sub = submissions.submit(aid, "alice", text)
+        detection.detect_submission(eng, lock, sub, "prof")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    assert titles(at) == ["Hello, Prof. Reyes"]
+    assert [m.label for m in at.metric] == ["Students", "Handed in", "To decide", "Flagged or likely"]
+    figures = {m.label: m.value for m in at.metric}
+    assert figures["Handed in"] == "2" and figures["Flagged or likely"] == "1"
+    assert len([b for b in at.button if (b.key or "").startswith("home_flag_")]) == 1
+    assert at.get("vega_lite_chart")                         # the scores chart is drawn
+
+
+def test_student_home_figures(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    figures = {m.label: m.value for m in at.metric}
+    assert figures == {"To hand in": "1", "Waiting for your teacher": "0", "Returned": "0", "Classes": "1"}
+    submissions.submit(aid, "alice", ESSAY)
+    ok(at.run())
+    assert {m.label: m.value for m in at.metric}["Waiting for your teacher"] == "1"

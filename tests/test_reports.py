@@ -1,4 +1,5 @@
 import csv
+import datetime
 import threading
 
 import pytest
@@ -106,3 +107,32 @@ def test_archive_moves_the_data_folder(data_dir):
     moved = seed_demo.archive_data()
     assert moved.name.startswith("data.archived_") and (moved / "users.json").exists()
     assert not accounts.exists("nash") and paths.DATA_DIR.exists()
+
+
+def test_overview_counts_each_student_once_per_assignment(course):
+    eng, lock = FakeEngine(), threading.Lock()
+    aid = course["assignment"]["assignment_id"]
+    for text in ("wm " * 150, "wm " * 160):
+        sub = submissions.submit(aid, "alice", text)
+        detection.detect_submission(eng, lock, sub, "prof")
+    o = reports.teacher_overview("prof")
+    assert o["flagged"] == 1 and len(o["recent_flags"]) == 1
+    assert o["recent_flags"][0]["version"] == 2 and o["scored"] == 1
+    assert (o["handed_in"], o["handed_in_week"]) == (2, 2)
+    assert len(o["handed_in_daily"]) == 14 and o["handed_in_daily"][-1] == 2
+    row = o["class_rows"][0]
+    assert (row["students"], row["open"], row["to_decide"]) == (1, 1, 1)
+    assert row["join_code"] == classes.format_code(course["class"]["join_code"])
+
+
+def test_recent_daily_counts_and_due_soon():
+    now = datetime.datetime(2026, 9, 29, 12, 0, 0)
+    assert reports.recent("2026-09-25 08:00:00", now=now)
+    assert not reports.recent("2026-09-20 08:00:00", now=now)
+    assert not reports.recent("", now=now) and not reports.recent("2026-10-01 08:00:00", now=now)
+    counts = reports.daily_counts(["2026-09-29 01:00:00", "2026-09-28 23:00:00",
+                                   "2026-09-10 10:00:00", "junk"], days=3, now=now)
+    assert counts == [0, 1, 1]
+    today = datetime.date(2026, 9, 29)
+    assert reports.due_soon("2026-10-02", today=today) and reports.due_soon("2026-09-29", today=today)
+    assert not reports.due_soon("2026-10-20", today=today) and not reports.due_soon("", today=today)

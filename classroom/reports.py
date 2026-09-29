@@ -6,6 +6,8 @@ student who handed nothing in still has a row), and writes new CSV files
 under data/reports/. The source files are never edited here.
 """
 
+import datetime
+
 import pandas as pd
 
 import verdict
@@ -15,7 +17,7 @@ STATES = ("not submitted", "awaiting detection", "awaiting decision", "decided",
 REPORT_COLUMNS = ["username", "display_name", "state", "version", "submitted_at", "source",
                   "words", "tokens_scored", "green_pct", "z_score", "label", "decision", "note",
                   "returned", "returned_at"]
-FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id"]
+FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at"]
 SUMMARY_COLUMNS = ["assignment_id", "title", "due_at", "status", "students", "submitted",
                    "detected", "likely", "possible", "not_detected", "inconclusive", "accepted",
                    "flagged", "needs_review", "returned", "mean_z"]
@@ -50,7 +52,7 @@ def assignment_frame(assignment_id):
     revs = pd.DataFrame(list(reviews.latest_by_submission(assignment_id).values()),
                         columns=reviews.COLUMNS)[
         ["submission_id", "review_id", "tokens_scored", "green_pct", "z_score", "label",
-         "decision", "note", "returned", "returned_at"]]
+         "decision", "note", "returned", "returned_at", "detected_at"]]
 
     df = roster.merge(subs, on="username", how="left").fillna("")
     df = df.merge(revs, on="submission_id", how="left").fillna("")
@@ -91,40 +93,93 @@ def class_summary(class_id):
     return pd.DataFrame(rows, columns=SUMMARY_COLUMNS)
 
 
-def teacher_overview(username):
-    """The numbers and lists for the teacher's home page."""
+def _moment(timestamp):
+    try:
+        return datetime.datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def recent(timestamp, days=7, now=None):
+    """True when the timestamp lies within the last `days` days."""
+    moment = _moment(timestamp)
+    now = now or datetime.datetime.now()
+    return moment is not None and datetime.timedelta(0) <= now - moment <= datetime.timedelta(days=days)
+
+
+def daily_counts(timestamps, days=14, now=None):
+    """How many timestamps fall on each of the last `days` days, oldest first."""
+    today = (now or datetime.datetime.now()).date()
+    counts = [0] * days
+    for timestamp in timestamps:
+        moment = _moment(timestamp)
+        if moment is not None and 0 <= (today - moment.date()).days < days:
+            counts[days - 1 - (today - moment.date()).days] += 1
+    return counts
+
+
+def due_soon(due_at, days=7, today=None):
+    """True when an ISO due date falls between today and `days` days from now."""
+    try:
+        due = datetime.date.fromisoformat(due_at)
+    except (TypeError, ValueError):
+        return False
+    today = today or datetime.date.today()
+    return today <= due <= today + datetime.timedelta(days=days)
+
+
+def teacher_overview(username, now=None):
+    """The figures, lists and chart points for the teacher's home page.
+
+    Everything is about each student's current version: once a newer version
+    is handed in, the older version's score and decision are history, so a
+    student appears at most once per assignment."""
     my_classes = classes.list_classes(username)
-    names = accounts.display_names()
-    class_names = {c["class_id"]: c["name"] for c in my_classes}
-    students, queue, flags = set(), [], []
-    open_count = awaiting_detection = awaiting_decision = 0
+    students, joined_this_week, handed_in = set(), set(), []
+    queue, flags, scores, class_rows = [], [], [], []
     for c in my_classes:
-        students |= {r["username"] for r in classes.roster(c["class_id"], "active")}
-        for task in assignments.list_assignments(c["class_id"]):
-            open_count += task["status"] == "open"
-            counts = state_counts(assignment_frame(task["assignment_id"]))
-            awaiting_detection += counts["awaiting detection"]
-            awaiting_decision += counts["awaiting decision"]
+        cid = c["class_id"]
+        active = classes.roster(cid, "active")
+        students |= {r["username"] for r in active}
+        joined_this_week |= {r["username"] for r in active if recent(r["joined_at"], now=now)}
+        handed_in += [s["submitted_at"] for s in submissions.list_submissions(class_id=cid, current_only=False)]
+        row = {"class_id": cid, "name": c["name"], "term": c["term"], "students": len(active),
+               "open": 0, "to_decide": 0, "not_scored": 0,
+               "join_code": classes.format_code(c["join_code"])}
+        for task in assignments.list_assignments(cid):
+            frame = assignment_frame(task["assignment_id"])
+            counts = state_counts(frame)
+            row["open"] += task["status"] == "open"
+            row["not_scored"] += counts["awaiting detection"]
+            row["to_decide"] += counts["awaiting decision"]
             if counts["awaiting detection"] or counts["awaiting decision"]:
-                queue.append({"class_id": c["class_id"], "class_name": c["name"],
+                queue.append({"class_id": cid, "class_name": c["name"],
                               "assignment_id": task["assignment_id"], "title": task["title"],
                               "due_at": task["due_at"],
                               "awaiting_detection": counts["awaiting detection"],
                               "awaiting_decision": counts["awaiting decision"]})
-    titles = {t["assignment_id"]: t["title"] for t in assignments.list_assignments()}
-    for r in reviews.list_reviews():
-        if r["class_id"] in class_names and (r["label"] == verdict.LABEL_LIKELY
-                                             or r["decision"] == "flagged"):
-            flags.append({"student": names.get(r["username"], r["username"]),
-                          "assignment": titles.get(r["assignment_id"], ""),
-                          "class_name": class_names[r["class_id"]],
-                          "label": r["label"], "z_score": r["z_score"],
-                          "decision": r["decision"], "detected_at": r["detected_at"],
-                          "assignment_id": r["assignment_id"], "class_id": r["class_id"],
-                          "username": r["username"]})
-    return {"classes": len(my_classes), "students": len(students), "open_assignments": open_count,
-            "awaiting_detection": awaiting_detection, "awaiting_decision": awaiting_decision,
-            "queue": queue, "recent_flags": flags[:5]}
+            for rec in frame[frame["review_id"] != ""].to_dict("records"):
+                point = {"student": rec["display_name"], "username": rec["username"],
+                         "assignment": task["title"], "assignment_id": task["assignment_id"],
+                         "class_id": cid, "class_name": c["name"], "version": int(rec["version"]),
+                         "tokens_scored": rec["tokens_scored"], "z_score": rec["z_score"],
+                         "label": rec["label"], "decision": rec["decision"],
+                         "detected_at": rec["detected_at"], "review_id": rec["review_id"]}
+                scores.append(point)
+                if rec["label"] == verdict.LABEL_LIKELY or rec["decision"] == "flagged":
+                    flags.append(point)
+        class_rows.append(row)
+    flags.sort(key=lambda p: p["detected_at"], reverse=True)
+    return {"classes": len(my_classes), "students": len(students),
+            "students_new": len(joined_this_week),
+            "open_assignments": sum(r["open"] for r in class_rows),
+            "handed_in": len(handed_in),
+            "handed_in_week": sum(recent(t, now=now) for t in handed_in),
+            "handed_in_daily": daily_counts(handed_in, now=now),
+            "awaiting_detection": sum(r["not_scored"] for r in class_rows),
+            "awaiting_decision": sum(r["to_decide"] for r in class_rows),
+            "scored": len(scores), "flagged": len(flags),
+            "queue": queue, "recent_flags": flags[:5], "scores": scores, "class_rows": class_rows}
 
 
 def student_overview(username):
