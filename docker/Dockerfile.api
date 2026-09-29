@@ -1,0 +1,15 @@
+# MarkText API: Python core + FastAPI. The model (about 1 GB) downloads on
+# first start into /root/.cache/huggingface; mount a volume there to keep it.
+FROM python:3.12-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+ && pip install --no-cache-dir -r requirements.txt fastapi uvicorn httpx
+COPY config.py engine.py history.py experiment.py ./
+COPY api ./api
+COPY prompts ./prompts
+COPY README.md config/watermark_config.example.json ./
+RUN mkdir -p config logs generated
+ENV MARKTEXT_CORS=http://localhost:3000
+EXPOSE 8000
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

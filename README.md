@@ -105,6 +105,16 @@ Web (Streamlit), opens at http://localhost:8501 (bound to localhost in `.streaml
 streamlit run app.py
 ```
 
+Web platform (API + site), the front end meant for deployment and, later, accounts:
+
+```bash
+pip install fastapi uvicorn httpx
+uvicorn api.main:app --port 8000          # loads the model once, serves the JSON API
+cd web && npm install && npm run dev      # http://localhost:3000, expects the API on :8000
+```
+
+`api/` wraps the same core modules (`engine.py`, `history.py`, `experiment.py`, `config.py`) behind a small FastAPI service; `web/` is a Next.js site with a landing page, an About page that renders this README, and the four app screens (Generate, Detect, History, Experiments). `docker/` holds Dockerfiles and a compose file for a single-server deployment; nothing is deployed yet.
+
 On first run Hugging Face downloads Qwen2.5-0.5B-Instruct (about 1 GB) into `~/.cache/huggingface/hub`; later launches use the cache. Both front-ends share the config, the history CSV and the `generated/` folders. Generation on a CPU takes a few tokens per second.
 
 Tests (no model download needed):
@@ -145,7 +155,14 @@ python experiment.py --resume <batch_id>
 
 Every row is written as soon as it exists, so an interrupted batch loses at most one generation; `--resume` skips finished cells. Each cell's seed is derived from the seed base and the cell itself (prompt, length, mode, run), so a batch can be repeated exactly and extended with more lengths without changing existing cells. The summary is exported to `logs/exports/experiment_<batch_id>_summary.csv` and shown in the web app's Experiment tab.
 
-Measured results: see the table at the end of this file once the demo batch has run.
+Measured results (batch `b6299b88`, 2026-09-23, 100 prompts x 150 tokens x both modes, seed base 100, bias 3.0, ratio 0.5, `selfhash`, width 5, CPU):
+
+| Mode | n | Flagged at z ≥ 4 | At or above z ≥ 2 | Mean z | Mean green share | Inconclusive |
+|---|---|---|---|---|---|---|
+| watermarked | 100 | **86%** (true-positive rate) | 100% | 5.22 | 71.7% | 1% |
+| normal | 100 | **0%** (false-positive rate) | 0% | -0.35 | 48.5% | 1% |
+
+Reading it: at 150 tokens the threshold of 4.0 catches 86 of 100 watermarked texts and none of the normal ones; every watermarked text clears 2.0. The smoke batch (3 prompts x 50/150/300 tokens) showed 100% at 300 tokens and 0% at 50 tokens, where everything is inconclusive. Ten of the 200 texts (7 normal, 3 watermarked) re-tokenized to a different count than they were generated with, which is the decode-then-encode gap the detector has to live with.
 
 ## Limitations
 
