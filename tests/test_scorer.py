@@ -167,3 +167,26 @@ def test_detect_reports_the_passage_in_characters():
 def test_short_texts_have_no_passage():
     stats = make().detect(words(120, seed=5))
     assert stats["passage"] is None
+
+
+def test_the_seed_is_the_one_the_library_uses():
+    s = make()
+    g = torch.Generator().manual_seed(1)
+    for _ in range(20):
+        context = [int(i) for i in torch.randint(0, VOCAB, (5,), generator=g)]
+        library = s.processor._get_greenlist_ids(torch.tensor(context))
+        rng = torch.Generator().manual_seed(s.seed(context) % (2 ** 64 - 1))
+        ours = torch.randperm(VOCAB, generator=rng)[:s.processor.greenlist_size]
+        assert torch.equal(library, ours)
+
+
+def test_positions_that_share_a_colour_key_count_once():
+    asked = []
+
+    def green(context, token):
+        asked.append(token)
+        return True
+    ids = [1, 2, 3, 4, 9, 5, 6, 7, 8, 9, 5, 6, 7, 8, 7]
+    by_token = scorer.outcomes(ids, 5, True, green, once=True, key=lambda gram: gram[-1])
+    assert [ids[pos] for pos, _ in by_token] == [9, 5, 6, 7, 8]    # later 9, 5, 6, 7, 8, 7 repeat
+    assert sorted(asked) == [5, 6, 7, 8, 9]

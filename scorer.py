@@ -16,10 +16,21 @@ The test (Kirchenbauer et al. 2023, arXiv:2301.10226):
 1. Tokenise the text. Each position after the first context_width - 1
    tokens is "scored": its n-gram (the context and the token itself, for
    selfhash) decides whether the token is green.
-2. A repeated n-gram is counted once (arXiv:2306.04634, the paper the
-   library's own docstring cites): its colour is fixed by the key, so a
-   second copy of a phrase is not new evidence, and counting it again
-   inflates z for text that repeats itself.
+2. A token whose colour is already known is counted once. The colour of a
+   token is fixed by its green list, and the green list only by the seed
+   the key derives from the context (WatermarkLogitsProcessor.set_seed).
+   With selfhash the seed is the smallest of key * table[t] * table[last]
+   over the window, so it often depends on just two tokens: the same word
+   after many different phrases can have the same seed, hence the same
+   colour every time. Counting such repeats inflates z on human text.
+   Measured on 8 human texts under 100 random keys (800 scores): counting
+   every position, as the library does, the spread of z was 1.33 instead
+   of 1, 7.4% reached z >= 2 (the threshold promises 2.3%) and 0.5% reached
+   z >= 4 (promised: 0.003%); counting each 5-token n-gram once still gave
+   1.24 and 5.8%; counting each (seed, token) pair once gives 1.02, 2.4%
+   and none at z >= 4. So each (seed, token) pair counts once, which also
+   covers repeated phrases (arXiv:2306.04634, the paper the library's own
+   docstring cites, recommends ignoring repeats).
 3. Without the watermark each distinct n-gram is green with probability
    gamma (the greenlist ratio), so with T scored and G green:
        z = (G - gamma*T) / sqrt(T * gamma * (1 - gamma))
@@ -55,20 +66,24 @@ def z_score(green, total, gamma):
     return (green - gamma * total) / math.sqrt(total * gamma * (1 - gamma))
 
 
-def outcomes(ids, n, selfhash, is_green, once=True):
+def outcomes(ids, n, selfhash, is_green, once=True, key=None):
     """[(position, green)] for each scored position in text order, where
-    position is the index of the scored token. With once=True an n-gram
-    seen earlier in the text is skipped. is_green(context, token) -> bool."""
+    position is the index of the scored token. key(gram) says which
+    positions must share a colour (default: the n-gram itself); with
+    once=True a position whose key was seen earlier is skipped.
+    is_green(context, token) -> bool."""
+    key = key or (lambda gram: gram)
     seen = {}
     out = []
     for end in range(n - 1, len(ids)):
         gram = tuple(ids[end - n + 1:end + 1])
-        repeat = gram in seen
+        k = key(gram)
+        repeat = k in seen
         if repeat and once:
             continue
         if not repeat:
-            seen[gram] = bool(is_green(gram if selfhash else gram[:-1], gram[-1]))
-        out.append((end, seen[gram]))
+            seen[k] = bool(is_green(gram if selfhash else gram[:-1], gram[-1]))
+        out.append((end, seen[k]))
     return out
 
 
@@ -140,6 +155,23 @@ class Scorer:
         greenlist = self.processor._get_greenlist_ids(torch.tensor(context, dtype=torch.long))
         return bool((greenlist == token).any())
 
+    def seed(self, context):
+        """The seed the library derives from a context, computed the way
+        WatermarkLogitsProcessor.set_seed does (a test checks that the green
+        list drawn from it is the library's). With selfhash: the smallest
+        of key * (table[t] + 1) * (table[last] + 1) over the window."""
+        p = self.processor
+        seq = torch.tensor(context[-p.context_width:], dtype=torch.long)
+        if p.seeding_scheme == "selfhash":
+            a = p.fixed_table[seq % p.table_size] + 1
+            b = p.fixed_table[seq[-1] % p.table_size] + 1
+            return int((p.hash_key * a * b).min().item())
+        return int(p.hash_key * seq[-1].item())
+
+    def colour_key(self, gram):
+        """What fixes a token's colour: the seed of its context, and the token."""
+        return (self.seed(gram if self.selfhash else gram[:-1]), gram[-1])
+
     def tokenize(self, text):
         """Token ids and each token's (start, end) characters in `text`."""
         enc = self.tokenizer(text, return_offsets_mapping=True)
@@ -154,14 +186,15 @@ class Scorer:
         ids, spans = self.tokenize(text)
         if len(ids) < self.min_tokens:
             return None
-        results = outcomes(ids, self.n, self.selfhash, self.is_green, self.once)
+        results = outcomes(ids, self.n, self.selfhash, self.is_green, self.once, self.colour_key)
         stats = evidence(results, self.gamma, self.config)
-        grams = [tuple(ids[end - self.n + 1:end + 1]) for end in range(self.n - 1, len(ids))]
+        keys = [self.colour_key(tuple(ids[end - self.n + 1:end + 1]))
+                for end in range(self.n - 1, len(ids))]
         passage = stats["passage"]
         if passage is not None:
             passage.update(start=int(spans[passage["first"]][0]), end=int(spans[passage["last"]][1]))
         stats.update({
-            "repeated": len(grams) - len(set(grams)),        # positions whose n-gram came earlier
+            "repeated": len(keys) - len(set(keys)),          # positions whose colour was already known
             "prediction": stats["label"] == verdict.LABEL_LIKELY,
             "confidence": 1.0 - stats["p_value"],
             "input_tokens": len(ids),
