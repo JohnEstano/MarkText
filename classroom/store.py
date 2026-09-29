@@ -186,22 +186,67 @@ def rewrite_rows(path, columns, rows):
         return saved
 
 
-def update_one(path, columns, key, value, change):
-    """Apply change(row) to the single row whose `key` column equals `value`
+def update_where(path, columns, match, change, describe="the given key"):
+    """Apply change(row) to the single row for which match(row) is true
     (change returns the new row, or None to drop it). Raises ValueError
     unless exactly one row matches. Returns the backup path."""
     path = pathlib.Path(path)
     with lock_for(path):
         rows = read_rows(path, columns)
-        matches = [r for r in rows if r.get(key) == value]
-        if len(matches) != 1:
-            raise ValueError("{} row(s) in {} have {} = {!r}; expected exactly one.".format(
-                len(matches), path.name, key, value))
+        hits = [r for r in rows if match(r)]
+        if len(hits) != 1:
+            raise ValueError("{} row(s) in {} match {}; expected exactly one.".format(
+                len(hits), path.name, describe))
         new_rows = []
         for row in rows:
-            if row.get(key) == value:
+            if match(row):
                 row = change(dict(row))
                 if row is None:
                     continue
             new_rows.append(row)
         return rewrite_rows(path, columns, new_rows)
+
+
+def update_one(path, columns, key, value, change):
+    """update_where() for the row whose `key` column equals `value`."""
+    return update_where(path, columns, lambda r: r.get(key) == value, change,
+                        "{} = {!r}".format(key, value))
+
+
+# ----------------------------------------------------------------- new files
+def unique_path(folder, stem, suffix):
+    """folder/stem+suffix, or stem_2, stem_3... if that name is taken."""
+    folder = pathlib.Path(folder)
+    candidate = folder / (stem + suffix)
+    n = 2
+    while candidate.exists():
+        candidate = folder / "{}_{}{}".format(stem, n, suffix)
+        n += 1
+    return candidate
+
+
+def write_new_text(path, text):
+    """Create a text file that must not exist yet (mode "x" never overwrites)."""
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "x", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
+def write_new_json(path, data):
+    path = pathlib.Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "x", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+    return path
+
+
+def write_new_csv(path, columns, rows):
+    """A new CSV file (reports, exports). Written to a temp name first, so a
+    half-written report never appears under its final name."""
+    path = pathlib.Path(path)
+    if path.exists():
+        raise FileExistsError(path)
+    _replace(path, lambda tmp: _write_csv(tmp, columns, rows))
+    return path

@@ -22,3 +22,24 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(accounts, "ITERATIONS", 1000)
     paths.ensure_dirs()
     return tmp_path / "data"
+
+
+@pytest.fixture
+def people(data_dir):
+    """One teacher (prof) and two students (alice, ben)."""
+    from classroom import accounts
+    accounts.register("prof", "teacherpass", "teacher", "Prof. Reyes")
+    accounts.register("alice", "studentpass", "student", "Alice Santos")
+    accounts.register("ben", "studentpass", "student", "Ben Okafor")
+    return data_dir
+
+
+@pytest.fixture
+def course(people):
+    """A class with alice enrolled and one open assignment."""
+    from classroom import assignments, classes
+    cls = classes.create_class("Intro to writing", "prof", "Term 1")
+    classes.join_class(cls["join_code"], "alice")
+    task = assignments.create_assignment(cls["class_id"], "Why people keep diaries",
+                                         "About 200 words.", "2026-10-15", "prof")
+    return {"class": cls, "assignment": task}
