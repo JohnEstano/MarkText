@@ -158,7 +158,7 @@ pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pins the versions the tests pass with. The scorer reads the green lists and the seed of transformers' `WatermarkLogitsProcessor`, so a different transformers version could score the same text differently; `tests/test_golden.py` scores a committed essay with the real tokenizer and fails if the numbers move. Upgrade on purpose, run the tests, and re-score if needed. GitHub Actions runs the suite on every push (`.github/workflows/tests.yml`).
+`requirements.txt` pins the versions the tests pass with. The scorer reads the green lists and the seed of transformers' `WatermarkLogitsProcessor`, so a different transformers version could score the same text differently; `tests/test_golden.py` scores a committed essay with the real tokenizer and fails if the numbers move. Upgrade on purpose, run the tests (`pytest -q`), and re-score if needed.
 
 ## Running
 
