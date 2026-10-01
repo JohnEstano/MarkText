@@ -28,11 +28,6 @@ activity_tab, check_tab, backups_tab = st.tabs([":material/history: Activity", "
 
 # ------------------------------------------------------------ callbacks
 @common.safely
-def run_check():
-    state["integrity_findings"] = integrity.run(by=teacher)
-
-
-@common.safely
 def export_findings():
     path = integrity.export(state.get("integrity_findings") or [], by=teacher)
     common.flash("Findings saved to {}.".format(common.data_label(path)), ":material/download:")
@@ -86,15 +81,26 @@ with activity_tab:
 # ------------------------------------------------------------ integrity
 with check_tab:
     with st.container(horizontal=True, vertical_alignment="center"):
-        st.button("Check the files now", type="primary", icon=":material/fact_check:", key="check_run",
-                  on_click=run_check,
-                  help="Reads every data file and text; changes nothing. A few seconds.")
+        # run in the page, not in a callback, so the spinner shows while it reads
+        if st.button("Check the files now", type="primary", icon=":material/fact_check:", key="check_run",
+                     help="Reads every data file and text; changes nothing. A few seconds."):
+            with st.spinner("Reading every data file and text..."):
+                try:
+                    state["integrity_findings"] = integrity.run(by=teacher)
+                except ValueError as exc:
+                    common.fail("check", str(exc))
         findings = state.get("integrity_findings")
         if findings:
             st.download_button("Export findings", icon=":material/download:", key="check_export",
                                data=store.csv_text(integrity.FINDING_COLUMNS, findings).encode("utf-8"),
                                file_name="integrity.csv", mime="text/csv", on_click=export_findings)
-    if findings is None:
+    common.error_here("check")
+    problems = [f for f in findings or [] if f["severity"] != "info"]
+    if findings is not None and not problems:
+        # nothing wrong: say so, rather than zeros and an empty table
+        st.success("All files agree. {}".format(" ".join(f["detail"] for f in findings)),
+                   icon=":material/verified:")
+    elif findings is None:
         st.caption("Checks that every submission's text is on disk and unchanged (SHA-256), that "
                    "every sidecar, review, roster row and assignment points at something that exists, "
                    "that no file has unexpected columns, and that no half-written file was left behind.")
@@ -124,8 +130,8 @@ with backups_tab:
                            "settings_backup_restore")
     else:
         files = ["Every file"] + list(backups.DATA_FILES)
-        which = st.segmented_control("File", files, default="Every file", key="backup_file",
-                                     required=True)
+        # a list to pick from, not a row of seven buttons that a phone cannot fit
+        which = st.selectbox("File", files, key="backup_file")
         listed = [c for c in copies if which in (None, "Every file") or c["file"] == which]
         st.dataframe(pd.DataFrame(listed), hide_index=True, column_config={
             "file": st.column_config.TextColumn("Data file"),

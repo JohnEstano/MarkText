@@ -475,8 +475,8 @@ def test_the_records_page_checks_files_and_restores_a_backup(new_app, school):
     assert titles(at) == ["Records"]
     assert at.dataframe                                        # the activity log is listed
     ok(at.button(key="check_run").click().run())
-    assert [m.label for m in at.metric] == ["Errors", "Warnings", "Notes"]
-    assert at.metric[0].value == "0"
+    assert any("All files agree" in s.value for s in at.success)     # said, not shown as zeros
+    assert not at.metric
     copy = [c["backup"] for c in backups.listing() if c["file"] == "classes.json"][0]
     ok(at.selectbox(key="backup_pick").select(copy).run())
     ok(at.button(key="backup_restore").click().run())
@@ -883,6 +883,36 @@ def test_the_lab_writes_verdicts_like_the_other_pages_and_its_command_matches(ne
     assert at.multiselect(key="hist_results").options == ["Not detected"]
     follow(at, "lab_experiment")
     assert any("--prompts 3 " in c.value for c in at.code)          # not all 100 prompts
+
+
+def test_empty_pages_link_to_where_they_fill_and_home_knows_archived_classes(new_app, people):
+    cls = classes.create_class("Intro", "prof")
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")                                    # a class without assignments
+    links = [link.proto.label for link in at.get("page_link")]
+    assert "Open the class" in links and at.session_state["open_class_id"] == cls["class_id"]
+    classes.set_archived(cls["class_id"], True, by="prof")
+    follow(at, "teacher_home")
+    assert any("All your classes are archived" in m.value for m in at.markdown)
+
+
+def test_long_home_lists_show_five_and_the_rest_under_more(new_app, school):
+    cid = school["class"]["class_id"]
+    for n in range(6):                                             # seven open assignments in all
+        assignments.create_assignment(cid, "Essay {}".format(n), "", "", "prof")
+    at = sign_in(new_app(), "alice", "studentpass")
+    assert "2 more" in [e.label for e in at.expander]
+
+
+def test_the_detect_result_goes_when_the_text_changes(new_app, people):
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "lab_detect")
+    at.text_area(key="detect_text").input(ESSAY)
+    ok(at.button(key="detect_run").click().run())
+    assert at.session_state["detect_stats"] is not None
+    ok(at.text_area(key="detect_text").input(ESSAY + " One more sentence.").run())
+    assert at.session_state["detect_stats"] is None                 # no old score on a new text
+    assert any("Nothing scored yet" in c.value for c in at.caption)
 
 
 def tab_goes_field_to_field(at):

@@ -122,12 +122,14 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
     with st.container(width="content"):
         st.caption("Class code")
         st.code(classes.format_code(current["join_code"]), language=None)
-    st.button("Rename", icon=":material/edit:", key="class_rename", on_click=common.open_dialog,
-              args=("rename_class",), kwargs={"class_id": cid, "teacher": teacher})
-    st.button("New code", icon=":material/key:", key="class_rotate", on_click=common.open_dialog,
-              args=("rotate_code",), kwargs={"class_id": cid, "teacher": teacher})
-    st.button("Archive", icon=":material/archive:", key="class_archive", on_click=common.open_dialog,
-              args=("archive_class",), kwargs={"class_id": cid, "teacher": teacher})
+    # the code and Export stay in view; the rarer actions wait in a menu, so a phone row fits
+    with st.popover("More", icon=":material/more_horiz:"):
+        st.button("Rename", icon=":material/edit:", key="class_rename", on_click=common.open_dialog,
+                  args=("rename_class",), kwargs={"class_id": cid, "teacher": teacher}, width="stretch")
+        st.button("New code", icon=":material/key:", key="class_rotate", on_click=common.open_dialog,
+                  args=("rotate_code",), kwargs={"class_id": cid, "teacher": teacher}, width="stretch")
+        st.button("Archive", icon=":material/archive:", key="class_archive", on_click=common.open_dialog,
+                  args=("archive_class",), kwargs={"class_id": cid, "teacher": teacher}, width="stretch")
     # built only when clicked (a callable): the zip reads every text of the class
     st.download_button("Export class", icon=":material/folder_zip:", key="class_zip_" + cid,
                        data=lambda: archive.export_class(cid, by=teacher).read_bytes(),
@@ -161,6 +163,8 @@ with roster_tab:
         with st.expander("Skipped in {} ({})".format(common.md(report["file"]), len(report["skipped"])),
                          icon=":material/info:", expanded=True):
             st.dataframe(pd.DataFrame(report["skipped"], columns=["username", "reason"]), hide_index=True)
+            st.button("Dismiss", key="import_report_dismiss", type="tertiary",
+                      on_click=lambda: state.pop("import_report", None))
     if not present:
         common.empty_state("Nobody here yet", "Students join with the code {}, or import a roster "
                            "file.".format(classes.format_code(current["join_code"])), "group_add")
@@ -250,28 +254,28 @@ with tasks_tab:
                 if assignments.is_overdue(task) and task["status"] == "open":
                     due += " (past due)"
                 st.caption("{} · created {}".format(due, common.when(task["created_at"])))
-            st.badge("{}/{} handed in".format(handed_in, students), color="blue",
-                     icon=":material/assignment_turned_in:")
-            st.badge("{} scored".format(scored), color="orange", icon=":material/fact_check:")
-            st.badge("{} returned".format(counts["returned"]), color="green", icon=":material/done_all:")
-            if task.get("points"):
-                st.badge("{} points".format(task["points"]), color="gray", icon=":material/grade:")
+                facts = ["{}/{} handed in".format(handed_in, students), "{} scored".format(scored),
+                         "{} returned".format(counts["returned"])]
+                if task.get("points"):
+                    facts.append("{} points".format(task["points"]))
+                st.caption(" · ".join(facts))
             if task["status"] == "open":
                 st.badge("Open", color="green")
             else:
                 st.badge("Closed", color="gray", icon=":material/lock:")
             st.button("Review", type="primary", key="review_" + task["assignment_id"],
                       on_click=common.open_review, args=(cid, task["assignment_id"]))
-            st.button("Edit", key="edit_" + task["assignment_id"], icon=":material/edit:",
-                      on_click=common.open_dialog, args=("edit_assignment",),
-                      kwargs={"assignment_id": task["assignment_id"], "teacher": teacher})
-            if task["status"] == "open":
-                st.button("Close", key="close_" + task["assignment_id"], on_click=set_status,
-                          args=(task["assignment_id"], "closed"),
-                          help="Stops new submissions; nothing is deleted.")
-            else:
-                st.button("Reopen", key="reopen_" + task["assignment_id"], on_click=set_status,
-                          args=(task["assignment_id"], "open"))
+            with st.popover("More", icon=":material/more_horiz:"):
+                st.button("Edit", key="edit_" + task["assignment_id"], icon=":material/edit:",
+                          on_click=common.open_dialog, args=("edit_assignment",),
+                          kwargs={"assignment_id": task["assignment_id"], "teacher": teacher}, width="stretch")
+                if task["status"] == "open":
+                    st.button("Close", key="close_" + task["assignment_id"], on_click=set_status,
+                              args=(task["assignment_id"], "closed"), icon=":material/lock:", width="stretch",
+                              help="Stops new submissions; nothing is deleted.")
+                else:
+                    st.button("Reopen", key="reopen_" + task["assignment_id"], on_click=set_status,
+                              args=(task["assignment_id"], "open"), icon=":material/lock_open:", width="stretch")
 
 with summary_tab:
     summary = reports.class_summary(cid)

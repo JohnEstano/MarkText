@@ -563,13 +563,37 @@ def state_badge(state, where=st):
 
 
 # ------------------------------------------------------------------ layout
-def empty_state(title, body, icon="inbox"):
+def empty_state(title, body, icon="inbox", links=()):
+    """An empty list says what would fill it; `links` [(page, label), ...]
+    are the pages where that happens, one click away."""
     with st.container(border=True, horizontal_alignment="center"):
         st.space("small")
         st.markdown(":material/{}:".format(icon), text_alignment="center")
         st.markdown("**{}**".format(title), text_alignment="center")
         st.caption(body, text_alignment="center")
+        if links:
+            with st.container(horizontal=True, horizontal_alignment="center"):
+                for page, label in links:
+                    st.page_link(page, label=label, icon=":material/arrow_forward:")
         st.space("small")
+
+
+def short_list(items, draw, first=5):
+    """draw(item) for the first `first` items and the rest under "N more",
+    so a long list does not push the rest of the page out of sight."""
+    for item in items[:first]:
+        draw(item)
+    rest = items[first:]
+    if rest:
+        with st.expander("{} more".format(len(rest))):
+            for item in rest:
+                draw(item)
+
+
+def open_class(class_id):
+    """Show this class on the Classes page (safe in callbacks)."""
+    st.session_state["open_class_id"] = class_id
+    go("app_pages/teacher_classes.py")
 
 
 def metric_row(items):

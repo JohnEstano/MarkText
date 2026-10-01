@@ -9,7 +9,7 @@ import datetime
 
 import streamlit as st
 
-from classroom import accounts, reports, seed_demo
+from classroom import accounts, classes, reports, seed_demo
 from ui import charts, common, dialogs
 
 user = common.require_role("teacher")
@@ -65,11 +65,6 @@ def demo_dialog():
             common.finish_dialog()
 
 
-def open_class(class_id):
-    state["open_class_id"] = class_id
-    common.go("app_pages/teacher_classes.py")
-
-
 overview = reports.teacher_overview(user["username"])
 today = datetime.date.today()
 
@@ -93,11 +88,17 @@ if state.get("config_notes"):
 
 # ------------------------------------------------------------ no classes
 if overview["classes"] == 0:
-    common.empty_state("No classes yet",
-                       "Create a class and share its code with your students, or load a demo "
-                       "class with five students and scored essays.", "school")
+    archived = [c for c in classes.list_classes(user["username"], include_archived=True) if c.get("archived")]
+    if archived:                     # not "no classes": they are there, put away
+        common.empty_state("All your classes are archived",
+                           "Restore one on the Classes page, or create a new class.", "archive",
+                           links=[("app_pages/teacher_classes.py", "Open Classes")])
+    else:
+        common.empty_state("No classes yet",
+                           "Create a class and share its code with your students, or load a demo "
+                           "class with five students and scored essays.", "school")
     with st.container(horizontal=True, horizontal_alignment="center"):
-        st.button("Create your first class", type="primary", icon=":material/add:",
+        st.button("Create a class" if archived else "Create your first class", type="primary", icon=":material/add:",
                   on_click=common.open_dialog, args=("create_class",),
                   kwargs={"teacher": user["username"]}, key="home_new_class")
         st.button("Load the demo class", icon=":material/science:", key="home_demo",
@@ -149,7 +150,7 @@ with left.container(border=True, height="stretch"):
     st.subheader("To review", icon=":material/pending_actions:", anchor=False)
     if not overview["queue"]:
         st.caption("Nothing waiting. New submissions appear here.")
-    for item in overview["queue"]:
+    def queue_item(item):
         with st.container(border=True):
             st.markdown("**{}**".format(common.md(item["title"])))
             due = " · due {}".format(common.day(item["due_at"])) if item["due_at"] else ""
@@ -164,6 +165,7 @@ with left.container(border=True, height="stretch"):
                 st.space("small")
                 st.button("Open", key="home_open_{}".format(item["assignment_id"]),
                           on_click=common.open_review, args=(item["class_id"], item["assignment_id"]))
+    common.short_list(overview["queue"], queue_item)
 with right.container(border=True, height="stretch"):
     st.subheader("Scores this term", icon=":material/scatter_plot:", anchor=False)
     if not overview["scores"]:
@@ -214,6 +216,6 @@ with right.container(border=True, height="stretch"):
                 if row["not_scored"]:
                     facts.insert(2, "{} not scored".format(row["not_scored"]))
                 st.caption(" · ".join(facts))
-            st.button("Open", key="home_class_" + row["class_id"], on_click=open_class, args=(row["class_id"],))
+            st.button("Open", key="home_class_" + row["class_id"], on_click=common.open_class, args=(row["class_id"],))
 
 common.render_dialogs({"create_class": dialogs.create_class})

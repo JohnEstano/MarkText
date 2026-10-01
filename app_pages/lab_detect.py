@@ -9,6 +9,11 @@ from ui import common, lab
 common.require_role("teacher")
 state = st.session_state
 
+
+def forget_result():
+    """The text changed: the result, and where its passage was, belonged to the old one."""
+    state["detect_stats"] = None
+
 st.title("Detect", anchor=False)
 st.caption("Score a text against this installation's key. Every score is logged.")
 col_in, col_out = st.columns([3, 2], gap="large")
@@ -17,7 +22,7 @@ with col_in:
     st.file_uploader("Open a .txt file", type=["txt"], key="uploader", on_change=lab.on_upload)
     if state["upload_error"]:
         st.error(state["upload_error"], icon=":material/error:")
-    st.text_area("Text to score", key="detect_text", height=360)
+    st.text_area("Text to score", key="detect_text", height=360, on_change=forget_result)
     with st.container(horizontal=True):
         analyze = st.button("Score", type="primary", icon=":material/manage_search:",
                             key="detect_run")
@@ -41,7 +46,7 @@ if analyze:
                 col_in.warning("The text is too short to score. It needs at least {} tokens.".format(
                     engine.min_tokens), icon=":material/hourglass_empty:")
             else:
-                state["detect_stats"] = stats
+                state["detect_stats"] = dict(stats, scored_text=text)
                 unchanged = state["detect_filename"] and text == state["detect_loaded"]
                 try:
                     history.append_history(stats, source="file" if unchanged else "manual",
@@ -74,7 +79,7 @@ with col_out:
                 st.caption(note)
             if passage:
                 with st.expander("Show the passage", icon=":material/format_color_text:"):
-                    st.markdown(common.highlighted(state["detect_text"], passage["start"], passage["end"]))
+                    st.markdown(common.highlighted(stats["scored_text"], passage["start"], passage["end"]))
     st.caption("MarkText detects only text it generated with its own key and parameters. It is not "
                "a universal AI-text detector: Not detected means this watermark was not found, not "
                "that a person wrote the text.")

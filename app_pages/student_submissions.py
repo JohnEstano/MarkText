@@ -14,8 +14,8 @@ SOURCE_TEXT = {"editor": "Typed", "upload": "Uploaded", "assistant": "Assistant 
 st.title("My submissions", anchor=False)
 mine = submissions.list_submissions(username=user["username"], current_only=False)
 if not mine:
-    common.empty_state("Nothing handed in yet", "Open an assignment from your home page to write "
-                       "or upload your answer.", "inventory_2")
+    common.empty_state("Nothing handed in yet", "Open an assignment to write or upload your answer.",
+                       "inventory_2", links=[("app_pages/student_assignment.py", "Open an assignment")])
     st.stop()
 
 tasks = {t["assignment_id"]: t for t in assignments.list_assignments()}
@@ -51,8 +51,11 @@ def open_row():
 
 
 with st.container(border=True):
+    # the decision second: on a phone the first columns are the ones in view
     st.dataframe(table.drop(columns=["submission_id"]), hide_index=True, key="submissions_table",
-                 on_select=open_row, selection_mode="single-row", column_config={
+                 on_select=open_row, selection_mode="single-row",
+                 column_order=["Assignment", "Teacher's decision", "Points", "Version", "Handed in", "Latest",
+                               "How", "Words", "Class"], column_config={
         "Version": st.column_config.NumberColumn(format="%d"),
         "Words": st.column_config.NumberColumn(format="%d"),
         "Latest": st.column_config.CheckboxColumn(help="The version your teacher reviews."),

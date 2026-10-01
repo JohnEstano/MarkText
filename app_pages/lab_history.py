@@ -94,7 +94,8 @@ except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
 
 if df.empty:
     common.empty_state("No detections yet", "Score a text on the Detect page, score a "
-                       "submission on the Review page, or run an experiment.", "history")
+                       "submission on the Review page, or run an experiment.", "history",
+                       links=[("app_pages/lab_detect.py", "Detect"), ("app_pages/teacher_review.py", "Review")])
     st.stop()
 
 with st.container(border=True):

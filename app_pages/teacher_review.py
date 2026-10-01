@@ -27,7 +27,8 @@ st.title("Review", anchor=False)
 mine = classes.list_classes(teacher)
 if not mine:
     common.empty_state("Nothing to review yet", "Create a class and an assignment first; "
-                       "submissions appear here as students hand them in.", "fact_check")
+                       "submissions appear here as students hand them in.", "fact_check",
+                       links=[("app_pages/teacher_classes.py", "Open Classes")])
     st.stop()
 
 names = {c["class_id"]: c["name"] for c in mine}
@@ -46,7 +47,9 @@ with pick_task:
     else:
         st.selectbox("Assignment", ["No assignments yet"], disabled=True, key="review_no_task")
 if not titles:
-    common.empty_state("This class has no assignments", "Create one on the Classes page.", "assignment")
+    state["open_class_id"] = class_id                 # the link below opens this class
+    common.empty_state("This class has no assignments", "Create one on the Classes page.", "assignment",
+                       links=[("app_pages/teacher_classes.py", "Open the class")])
     st.stop()
 task = assignments.get_assignment(assignment_id)
 graded = assignments.max_points(task)          # None when the assignment has no points
@@ -218,12 +221,15 @@ if report and report.get("assignment_id") == assignment_id and report["skipped"]
     with st.expander("Files not handed in ({})".format(len(report["skipped"])), icon=":material/info:",
                      expanded=True):
         st.dataframe(pd.DataFrame(report["skipped"], columns=["file", "reason"]), hide_index=True)
+        st.button("Dismiss", key="files_report_dismiss", type="tertiary",
+                  on_click=lambda: state.pop("files_report", None))
 
 # ------------------------------------------------------------ students
 if len(frame) == 0:
+    state["open_class_id"] = class_id                     # the link below opens this class
     common.empty_state("No students in this class", "Share the class code {} or import a roster on "
                        "the Classes page.".format(classes.format_code(classes.get_class(class_id)["join_code"])),
-                       "group_add")
+                       "group_add", links=[("app_pages/teacher_classes.py", "Open the class")])
     st.stop()
 
 usernames = list(frame["username"])

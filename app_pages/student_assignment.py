@@ -21,7 +21,8 @@ st.title("Assignment", anchor=False)
 tasks = assignments.for_student(user["username"])
 if not tasks:
     common.empty_state("No assignments yet", "Assignments appear here once your teacher posts "
-                       "them. Join a class from your home page first.", "assignment")
+                       "them. Join a class from your home page first.", "assignment",
+                       links=[("app_pages/student_home.py", "Go to your home page")])
     st.stop()
 
 titles = {t["assignment_id"]: t["title"] for t in tasks}

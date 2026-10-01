@@ -90,7 +90,8 @@ with left.container(border=True, height="stretch"):
     st.subheader("Returned to you", icon=":material/done_all:", anchor=False)
     if not returned:
         st.caption("Nothing returned yet. Your teacher's decisions appear here.")
-    for item in returned:
+
+    def returned_item(item):
         with st.container(horizontal=True, vertical_alignment="center"):
             with st.container():
                 st.markdown("**{}**".format(common.md(item["title"])))
@@ -101,11 +102,13 @@ with left.container(border=True, height="stretch"):
             common.decision_badge(item["decision"])
             st.button("View", key="view_" + item["assignment_id"], type="tertiary",
                       on_click=common.open_assignment, args=(item["assignment_id"],))
+    common.short_list(returned, returned_item)
 with right.container(border=True, height="stretch"):
     st.subheader("Assignments", icon=":material/assignment:", anchor=False)
     if not open_work:
         st.caption("Nothing open right now.")
-    for item in open_work:
+
+    def assignment_item(item):
         with st.container(border=True, horizontal=True, vertical_alignment="center"):
             with st.container():
                 st.markdown("**{}**".format(common.md(item["title"])))
@@ -117,6 +120,7 @@ with right.container(border=True, height="stretch"):
             st.button("Open", key="open_" + item["assignment_id"], on_click=common.open_assignment,
                       args=(item["assignment_id"],),
                       type="primary" if item["my_state"] == "not submitted" else "secondary")
+    common.short_list(open_work, assignment_item)
     teachers = accounts.display_names()
     st.caption("Teachers: {}".format(", ".join(sorted({common.md(teachers.get(c["teacher"], c["teacher"]))
                                                       for c in my_classes}))))
