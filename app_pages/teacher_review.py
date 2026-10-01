@@ -238,22 +238,29 @@ if state.get("review_pick") not in usernames:
     state["review_pick"] = (waiting["username"].iloc[0] if len(waiting) else usernames[0])
 
 with st.container(border=True):
-    st.subheader("Students", anchor=False)
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.subheader("Students", anchor=False)
+        # which states the table shows; remembered per assignment for the session
+        shown_states = st.pills("Show", common.STATE_ORDER, selection_mode="multi", default=common.STATE_ORDER,
+                                format_func=lambda s: "{} ({})".format(common.STATE_BADGE[s][0], counts[s]),
+                                key="review_filter_" + assignment_id, label_visibility="collapsed")
+    visible = frame[frame["state"].isin(shown_states or [])].reset_index(drop=True)
+    shown_users = list(visible["username"])
     view = pd.DataFrame({
-        "Student": frame["display_name"],
-        "Status": frame["state"].map(lambda s: [s]),
-        "Handed in": frame["submitted_at"].map(common.when),
-        "Words": frame["words"],
-        "Green %": frame["green_pct"],
-        "z": frame["z_score"],
+        "Student": visible["display_name"],
+        "Status": visible["state"].map(lambda s: [s]),
+        "Handed in": visible["submitted_at"].map(common.when),
+        "Words": visible["words"],
+        "Green %": visible["green_pct"],
+        "z": visible["z_score"],
         "Detector": [common.verdict_text(label) + (" (old count)" if old_count else "") if label else ""
-                     for label, old_count in zip(frame["label"], frame["old_count"])],
-        "Decision": frame["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
-        "Earlier flag": frame["earlier_flag"],
-        "Late": frame["late"],
+                     for label, old_count in zip(visible["label"], visible["old_count"])],
+        "Decision": visible["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
+        "Earlier flag": visible["earlier_flag"],
+        "Late": visible["late"],
     })
     if graded:
-        view["Points"] = frame["points"]
+        view["Points"] = visible["points"]
     pages = max(1, math.ceil(len(view) / PER_PAGE))
     if state.get("review_page", 1) > pages:
         state["review_page"] = 1
@@ -262,38 +269,45 @@ with st.container(border=True):
         st.caption("Select a row to open that student's work below.")
         current_page = st.pagination(pages, key="review_page") if pages > 1 else 1
     start = (current_page - 1) * PER_PAGE
-    state["_review_rows"] = usernames[start:start + PER_PAGE]
-    slot.dataframe(view.iloc[start:start + PER_PAGE], hide_index=True, key="review_table", placeholder="",
-                   on_select=on_table_pick, selection_mode="single-row", column_config={
-                       "Student": st.column_config.TextColumn(width="medium"),
-                       "Status": st.column_config.MultiselectColumn(
-                           "Status", options=common.STATE_ORDER, color=common.STATE_COLOURS,
-                           format_func=lambda s: common.STATE_BADGE[s][0]),
-                       "Words": st.column_config.NumberColumn(format="%d", width="small"),
-                       "Green %": st.column_config.ProgressColumn(
-                           min_value=0, max_value=100, format="%.1f%%",
-                           help="Share of green tokens; chance is 50%."),
-                       "z": st.column_config.NumberColumn(
-                           format="%.2f", width="small",
-                           help="How far the green share sits above chance, in standard errors."),
-                       "Earlier flag": st.column_config.CheckboxColumn(
-                           width="small", help="An earlier version was flagged or scored as likely "
-                                               "MarkText before this one was handed in."),
-                       "Late": st.column_config.CheckboxColumn(
-                           width="small", help="Handed in after the due date."),
-                       "Points": st.column_config.NumberColumn(
-                           format="%g", width="small", help="Out of {}.".format(graded)),
-                   })
+    state["_review_rows"] = shown_users[start:start + PER_PAGE]
+    if visible.empty:
+        slot.caption("No student matches the filter.")
+    else:
+        slot.dataframe(view.iloc[start:start + PER_PAGE], hide_index=True, key="review_table", placeholder="",
+                       on_select=on_table_pick, selection_mode="single-row", column_config={
+                           "Student": st.column_config.TextColumn(width="medium"),
+                           "Status": st.column_config.MultiselectColumn(
+                               "Status", options=common.STATE_ORDER, color=common.STATE_COLOURS,
+                               format_func=lambda s: common.STATE_BADGE[s][0]),
+                           "Words": st.column_config.NumberColumn(format="%d", width="small"),
+                           "Green %": st.column_config.ProgressColumn(
+                               min_value=0, max_value=100, format="%.1f%%",
+                               help="Share of green tokens; chance is 50%."),
+                           "z": st.column_config.NumberColumn(
+                               format="%.2f", width="small",
+                               help="How far the green share sits above chance, in standard errors."),
+                           "Earlier flag": st.column_config.CheckboxColumn(
+                               width="small", help="An earlier version was flagged or scored as likely "
+                                                   "MarkText before this one was handed in."),
+                           "Late": st.column_config.CheckboxColumn(
+                               width="small", help="Handed in after the due date."),
+                           "Points": st.column_config.NumberColumn(
+                               format="%g", width="small", help="Out of {}.".format(graded)),
+                       })
 
 labels = dict(zip(frame["username"], frame["display_name"]))
 states = dict(zip(frame["username"], frame["state"]))
 
 
 def next_waiting(after):
-    """The next student in table order, after `after` and round to the
-    start, who still waits for a score or a decision; None when nobody does."""
-    order = usernames[usernames.index(after) + 1:] + usernames[:usernames.index(after)]
-    return next((u for u in order if states[u] in ("awaiting decision", "awaiting detection")), None)
+    """The next student in the table as filtered, after `after` and round
+    to the start, who still waits for a score or a decision; None when
+    nobody does."""
+    order = shown_users
+    if after in order:
+        order = order[order.index(after) + 1:] + order[:order.index(after)]
+    return next((u for u in order if u != after and states[u] in ("awaiting decision", "awaiting detection")),
+                None)
 
 
 def go_to(username):

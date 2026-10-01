@@ -50,6 +50,12 @@ def sign_in(at, username, password):
     return ok(at.button(key="login_submit").click().run())
 
 
+def hand_in(at):
+    """Hand in what is in the editor: the button asks first, the dialog's button hands in."""
+    ok(at.button(key="hand_in").click().run())
+    return ok(at.button(key="hand_in_confirm").click().run())
+
+
 def follow(at, page):
     """AppTest follows st.switch_page only within one run; the browser keeps
     the new page. Re-open it the way the browser would."""
@@ -131,10 +137,10 @@ def test_student_joins_with_a_code_and_hands_in_two_versions(new_app, people):
     assert titles(at) == ["Assignment"]
     follow(at, "student_assignment")
     at.text_area(key="editor_" + aid).input(ESSAY)
-    ok(at.button(key="hand_in").click().run())
+    hand_in(at)
     at.text_area(key="editor_" + aid).input(ESSAY + " Revised.")
     at.text_input(key="version_note_" + aid).input("fixed the ending")
-    ok(at.button(key="hand_in").click().run())
+    hand_in(at)
     versions = submissions.versions(aid, "ben")
     assert [(v["version"], v["status"]) for v in versions] == [("1", "superseded"), ("2", "current")]
     assert versions[1]["version_note"] == "fixed the ending"
@@ -207,7 +213,7 @@ def test_assistant_draft_fills_the_editor_and_is_recorded(new_app, school):
     ok(at.button(key="assistant_go").click().run())
     ok(at.button(key="draft_use").click().run())
     assert at.text_area(key="editor_" + aid).value.startswith("wm wm")
-    ok(at.button(key="hand_in").click().run())
+    hand_in(at)
     sub = submissions.current_submission(aid, "alice")
     assert sub["source"] == "assistant"
     side = submissions.sidecar(sub)
@@ -569,7 +575,7 @@ def test_the_teacher_sees_what_changed_in_an_assistant_draft(new_app, school):
     ok(at.button(key="draft_use").click().run())
     draft = at.text_area(key="editor_" + aid).value
     at.text_area(key="editor_" + aid).input("My own opening sentence. " + draft)
-    ok(at.button(key="hand_in").click().run())
+    hand_in(at)
     side = submissions.sidecar(submissions.current_submission(aid, "alice"))
     assert side["generation"]["text"] == draft
     teacher = sign_in(new_app(), "prof", "teacherpass")
@@ -595,7 +601,7 @@ def test_after_a_key_rotation_a_draft_is_scored_with_its_own_key(new_app, school
     follow(at, "student_assignment")
     ok(at.button(key="assistant_go").click().run())
     ok(at.button(key="draft_use").click().run())
-    ok(at.button(key="hand_in").click().run())
+    hand_in(at)
     old, new = cfg.rotate_key(tmp_path / "wm.json")
     teacher = sign_in(new_app(), "prof", "teacherpass")
     follow(teacher, "teacher_review")
@@ -645,8 +651,9 @@ def test_an_answer_survives_an_idle_sign_out_and_the_hand_in_still_says_so(new_a
     follow(at, "student_assignment")
     assert at.text_area(key="editor_" + aid).value.endswith("and more.")
     assert any("Restored the answer" in c.value for c in at.caption)
+    ok(at.button(key="hand_in").click().run())                      # the question, then a quiet spell
     at.session_state["last_seen"] -= 31 * 60
-    ok(at.button(key="hand_in").click().run())                      # handed in after another quiet spell
+    ok(at.button(key="hand_in_confirm").click().run())              # the answer hands in, then signs out
     assert submissions.current_submission(aid, "alice")["version"] == "1"
     assert drafts.load("alice", aid) is None
     toasts = [t.value for t in at.toast]
@@ -754,7 +761,7 @@ def test_feedback_stays_in_view_while_the_student_revises(new_app, school):
     ok(at.button(key="start_from").click().run())                  # empty editor: no question asked
     assert at.text_area(key="editor_" + aid).value.strip() == ESSAY.strip()
     at.text_area(key="editor_" + aid).input(ESSAY + " My grandmother kept one too.")
-    ok(at.button(key="hand_in").click().run())
+    hand_in(at)
     assert "Your teacher's decision" in subheaders(at)              # still there after version 2
     captions = " ".join(c.value for c in at.caption)
     assert "On version 1" in captions and "You handed in version 2 after this" in captions
@@ -913,6 +920,45 @@ def test_the_detect_result_goes_when_the_text_changes(new_app, people):
     ok(at.text_area(key="detect_text").input(ESSAY + " One more sentence.").run())
     assert at.session_state["detect_stats"] is None                 # no old score on a new text
     assert any("Nothing scored yet" in c.value for c in at.caption)
+
+
+def test_review_filters_by_status_and_next_waiting_follows_the_filter(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    classes.join_class(school["class"]["join_code"], "ben")
+    for who in ("alice", "ben"):
+        submissions.submit(aid, who, ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    rid = reviews.latest_review(submissions.current_submission(aid, "alice")["submission_id"])["review_id"]
+    reviews.decide(rid, "accepted", "", "prof")                    # Alice decided, Ben still to decide
+    ok(at.run())
+    assert at.dataframe[0].value["Student"].tolist() == ["Alice Santos", "Ben Okafor"]
+    ok(at.pills(key="review_filter_" + aid).set_value(["awaiting decision"]).run())
+    assert at.dataframe[0].value["Student"].tolist() == ["Ben Okafor"]
+    ok(at.button(key="next_waiting").click().run())
+    assert at.session_state["review_pick"] == "ben"
+    ok(at.pills(key="review_filter_" + aid).set_value([]).run())
+    assert any("No student matches the filter" in c.value for c in at.caption)
+
+
+def test_handing_in_asks_first_and_says_what_a_new_version_does(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    at.text_area(key="editor_" + aid).input(ESSAY)
+    ok(at.button(key="hand_in").click().run())
+    assert any("Your teacher sees it once you hand it in" in m.value for m in at.markdown)
+    ok(at.button(key="hand_in_cancel").click().run())
+    assert submissions.current_submission(aid, "alice") is None    # Cancel hands nothing in
+    hand_in(at)
+    assert submissions.current_submission(aid, "alice")["version"] == "1"
+    ok(at.button(key="start_from").click().run())
+    at.text_area(key="editor_" + aid).input(ESSAY + " Revised.")
+    ok(at.button(key="hand_in").click().run())
+    assert any("instead of version 1, which stays on file" in m.value for m in at.markdown)
+    ok(at.button(key="hand_in_confirm").click().run())
+    assert submissions.current_submission(aid, "alice")["version"] == "2"
 
 
 def tab_goes_field_to_field(at):

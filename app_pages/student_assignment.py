@@ -175,6 +175,42 @@ def discard_draft():
     state["assistant_draft"] = None
 
 
+def ask_hand_in():
+    """Hand in asks first (confirm_hand_in); an empty answer is said at once."""
+    if not state.get(editor_key, state.get(text_key, "")).strip():
+        common.fail("hand_in", "The submission is empty.")
+        return
+    common.open_dialog("confirm_hand_in")
+
+
+@st.dialog("Hand in your work?", icon=":material/assignment_turned_in:", on_dismiss=common.close_dialog)
+def confirm_hand_in():
+    """What is about to go to the teacher, and what it does to the version
+    before. The Hand in button hands in in its callback (hand_in), where
+    the editor may still be emptied."""
+    text = state.get(editor_key, "")
+    how = {"upload": "from {}".format(common.md(state.get("upload_name_" + assignment_id, "a file"))),
+           "assistant": "started from an assistant draft"}.get(state.get(source_key), "typed here")
+    st.write("**Version {}**: {} words, {}.".format(next_version, len(text.split()), how))
+    note = state.get("version_note_" + assignment_id, "").strip()
+    if note:
+        st.caption("Your note: {}".format(common.md(note)))
+    if current:
+        st.write("Your teacher will review this version instead of version {}, which stays on file.".format(
+            current["version"]))
+    else:
+        st.write("Your teacher sees it once you hand it in. You can hand in a new version while the "
+                 "assignment is open.")
+    if assignments.is_overdue(task):
+        st.caption(":material/schedule: The due date has passed, so it will be marked late.")
+    with st.form("confirm_hand_in", border=False):
+        with st.container(horizontal=True, horizontal_alignment="right"):
+            cancel = st.form_submit_button("Cancel", key="hand_in_cancel")
+            confirm = st.form_submit_button("Hand in", type="primary", key="hand_in_confirm", on_click=hand_in)
+    if cancel or confirm:
+        common.finish_dialog()
+
+
 def hand_in():
     text = state.get(editor_key, state.get(text_key, ""))
     source = state.get(source_key, "editor")
@@ -281,7 +317,7 @@ with write_col:
         st.text_input("Note for your teacher (optional)", key="version_note_" + assignment_id,
                       placeholder="What changed in this version?", max_chars=submissions.MAX_NOTE)
         st.button("Hand in version {}".format(next_version), type="primary",
-                  icon=":material/assignment_turned_in:", on_click=hand_in, key="hand_in")
+                  icon=":material/assignment_turned_in:", on_click=ask_hand_in, key="hand_in")
         common.error_here("hand_in")
 
 with help_col:
@@ -340,4 +376,4 @@ with help_col:
                 if version["version_note"]:
                     st.caption(common.md(version["version_note"]))
 
-common.render_dialogs({"replace_text": replace_text})
+common.render_dialogs({"replace_text": replace_text, "confirm_hand_in": confirm_hand_in})
