@@ -74,7 +74,7 @@ At detection time the scorer re-tokenizes the text, recomputes the green list at
 | each 5-token n-gram once | 1.24 | 5.8% | 0 |
 | each (seed, token) pair once (MarkText) | 1.02 | 2.4% | 0 |
 
-The price is less evidence per text: a fully drafted 196-token assistant essay that scored 4.14 counting every position scores 3.81 counting correlated repeats once (172 independent tokens), so the assistant offers 250 tokens by default. Under the null hypothesis "the writer did not know the key", each distinct scored (seed, token) pair is green with probability `greenlist_ratio`, so the count is binomial and
+The price is less evidence per text: a fully drafted 196-token assistant essay that scored 4.14 counting every position scores 3.81 counting correlated repeats once (172 independent tokens), so the assistant offers 250 tokens by default. Scores made before this change (they have no count of repeats) are marked *old count* on the Review page and on the teacher's home page; *Score again* rescores them and keeps the decision, the note and what the student was shown. Under the null hypothesis "the writer did not know the key", each distinct scored (seed, token) pair is green with probability `greenlist_ratio`, so the count is binomial and
 
     z = (green − γ·T) / sqrt(T·γ·(1 − γ)),   p = P(Z ≥ z)
 
@@ -110,6 +110,7 @@ If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one
 | `data/assignments.csv` | CSV | `classroom/assignments.py` | Title, instructions, due date, open or closed |
 | `data/submissions.csv` | CSV | `classroom/submissions.py` | Index of every submitted version: version, source, SHA-256, word count, current or superseded |
 | `data/submissions/…/vNNN.txt` + `.json` | TXT + JSON | `classroom/submissions.py` | The text of each version and its sidecar (how it was produced; the assistant's seed and model, never the key) |
+| `data/drafts/<student>/<assignment>.json` | JSON | `classroom/drafts.py` | A student's answer that is not handed in yet, rewritten whenever it changes so a sign-out or a reload does not lose it; deleted at hand-in; never shown to the teacher |
 | `data/reviews.csv` | CSV | `classroom/reviews.py` | One row per scoring: numbers, model id, key id, decision, note, returned |
 | `data/audit.csv` | CSV | `classroom/audit.py` | The activity log: one appended row per change (sign-ins, hand-ins, scores, decisions, exports, restores); never rewritten |
 | `data/reports/*.csv`, `*.zip` | CSV, ZIP | `classroom/reports.py`, `classes.py`, `archive.py`, `audit.py`, `integrity.py` | Exported assignment tables, class summaries, rosters, activity, file-check findings, and whole classes as zip files |
@@ -137,7 +138,7 @@ What the teacher's actions do to the files:
 | Remove a student | `rosters.csv` | backup | status → removed | exactly one row must match |
 | Create, close, reopen an assignment | `assignments.csv` | a row | status | |
 | Open a submission | `vNNN.txt`, its sidecar, `reviews.csv` | | | |
-| Score one or all submissions | the texts | a history row and a review row each | | tokenises and runs the z-test |
+| Score one or all submissions, or score old scores again | the texts | a history row and a review row each (a new score carries the decision over) | | tokenises and runs the z-test |
 | Decide, return | `reviews.csv` | backup | decision, note, returned (a copy of the decision and note the student sees) | a decision changed after returning waits for the next return |
 | Export a report | roster, submissions, reviews | `data/reports/assignment_*.csv`, `class_*_summary_*.csv` | | pandas left joins, one state per student |
 | Hand in students' files | the uploaded `.txt` files | `vNNN.txt` + `.json` and an index row per file | the older version → superseded | the file name picks the student; not UTF-8, unknown or duplicate names are skipped with a reason |
@@ -147,7 +148,7 @@ What the teacher's actions do to the files:
 | Every change above | | a row in `data/audit.csv` | | |
 | Lab pages | history CSV, prompts, TXT uploads | TXT + JSON, new CSVs | note or filename of one record | summaries, charts, batch rates |
 
-Students read their assignments and their own files, and write one TXT + JSON pair per version; they never update or delete anything.
+Students read their assignments and their own files and write one TXT + JSON pair per version. While they write, their answer is also kept in one draft file per assignment, written atomically without a backup (it changes often), read back after a sign-out and deleted at hand-in; they never change anything else.
 
 ## Installation
 

@@ -33,16 +33,25 @@ if submitted:
         mode = (mode_label or "Watermarked").lower()
         engine, lock = common.engine()
         seconds = int(max_tok) / 4.3
-        try:
-            with st.spinner("Generating {} text, about {:.0f} s on this CPU...".format(mode, seconds)):
-                with lock:
-                    info = engine.generate(prompt.strip(), max_new_tokens=int(max_tok),
-                                           watermarked=(mode == "watermarked"))
-        except Exception as exc:                  # the model can fail in many ways; show it
-            st.error("Generation failed: {}".format(exc), icon=":material/error:")
+
+        def generate(text=prompt.strip(), tokens=int(max_tok), marked=(mode == "watermarked")):
+            with lock:
+                return engine.generate(text, max_new_tokens=tokens, watermarked=marked)
+        # in a thread of its own, so a click during the wait does not lose the text
+        # (common.start_job); the model can fail in many ways, and the error is shown
+        if common.job_running("gen_job"):
+            st.info("Still generating the last text.", icon=":material/hourglass_top:")
         else:
-            state["gen_info"], state["gen_text"], state["gen_mode"] = info, info["text"], info["mode"]
-            state["gen_saved"] = state["gen_save_error"] = ""
+            common.start_job("gen_job", generate,
+                             "Generating {} text, about {:.0f} s on this CPU.".format(mode, seconds), seconds)
+
+job = common.finished_job("gen_job")
+if job and job["error"]:
+    st.error("Generation failed: {}".format(job["error"]), icon=":material/error:")
+elif job:
+    info = job["result"]
+    state["gen_info"], state["gen_text"], state["gen_mode"] = info, info["text"], info["mode"]
+    state["gen_saved"] = state["gen_save_error"] = ""
 
 if state["gen_text"]:
     info = state["gen_info"] or {}

@@ -44,6 +44,10 @@ def audit_path():
     return DATA_DIR / "audit.csv"
 
 
+def drafts_dir():
+    return DATA_DIR / "drafts"
+
+
 def reports_dir():
     return DATA_DIR / "reports"
 
@@ -53,7 +57,7 @@ def backups_dir():
 
 
 def ensure_dirs():
-    for folder in (DATA_DIR, submissions_dir(), reports_dir(), backups_dir()):
+    for folder in (DATA_DIR, submissions_dir(), drafts_dir(), reports_dir(), backups_dir()):
         folder.mkdir(parents=True, exist_ok=True)
 
 

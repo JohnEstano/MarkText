@@ -105,6 +105,20 @@ if overview["classes"] == 0:
     common.render_dialogs({"create_class": dialogs.create_class, "demo": demo_dialog})
     st.stop()
 
+old = overview["old_scores"]
+if old:
+    with st.container(border=True):
+        total = sum(o["count"] for o in old)
+        st.warning("1 score was made before repeated words counted once, so its verdict may be out of "
+                   "date. Score it again on the Review page; the decision and note are kept."
+                   if total == 1 else
+                   "{} scores were made before repeated words counted once, so their verdicts may be out "
+                   "of date. Score them again on the Review page; decisions and notes are kept.".format(total),
+                   icon=":material/update:")
+        st.button("Open {}".format(common.md(old[0]["title"])), key="home_old_scores",
+                  icon=":material/arrow_forward:", type="tertiary",
+                  on_click=common.open_review, args=(old[0]["class_id"], old[0]["assignment_id"]))
+
 # ------------------------------------------------------------ figures
 # every figure has a second line, so the four cards line up
 not_scored, scored = overview["awaiting_detection"], overview["scored"]
@@ -171,8 +185,9 @@ with left.container(border=True, height="stretch"):
                     common.decision_badge("flagged")
                 else:
                     common.verdict_badge(flag["label"])
-            st.caption("{} · version {} · {}".format(common.md(flag["assignment"]), flag["version"],
-                                                     common.when(flag["detected_at"])))
+            st.caption("{} · version {} · {}{}".format(common.md(flag["assignment"]), flag["version"],
+                                                       common.when(flag["detected_at"]),
+                                                       " · old count" if flag["old_count"] else ""))
             st.button("View", key="home_flag_{}".format(flag["review_id"]), icon=":material/visibility:",
                       on_click=common.open_review,
                       args=(flag["class_id"], flag["assignment_id"], flag["username"]))

@@ -5,6 +5,7 @@ exports and the assistant switch. No browser, no model."""
 import json
 import pathlib
 import threading
+import time
 
 import pytest
 from fakes import FakeEngine
@@ -12,7 +13,8 @@ from streamlit.testing.v1 import AppTest
 
 import config as cfg
 import history
-from classroom import accounts, assignments, backups, classes, detection, paths, reviews, store, submissions
+from classroom import (accounts, assignments, assistant, backups, classes, detection, drafts, paths, reviews,
+                       store, submissions)
 from ui import common, lab
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -599,6 +601,104 @@ def test_after_a_key_rotation_a_draft_is_scored_with_its_own_key(new_app, school
     review = reviews.latest_review(submissions.current_submission(aid, "alice")["submission_id"])
     assert review["key_id"] == old and review["label"] == "LIKELY MARKTEXT"
     assert any("the key this draft was made with" in c.value for c in teacher.caption)
+
+
+def test_a_score_from_the_old_counting_is_marked_and_scored_again(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    old_stats = {"num_tokens_scored": 196, "num_green_tokens": 127, "green_fraction": 127 / 196,
+                 "z_score": 4.14, "p_value": 1.7e-5, "label": "LIKELY MARKTEXT", "device": "cpu"}
+    old = reviews.record_detection(sub, old_stats, "run1", "fake/model", "0a1b2c3d", "prof")
+    reviews.decide(old["review_id"], "flagged", "Looks drafted.", "prof")
+
+    at = sign_in(new_app(), "prof", "teacherpass")                  # Home
+    assert any("made before repeated words counted once" in w.value for w in at.warning)
+    assert any("old count" in c.value for c in at.caption)          # on the recent flag
+    follow(at, "teacher_review")
+    assert at.dataframe[0].value["Detector"].tolist() == ["Likely MarkText (old count)"]
+    assert any("earlier counting" in w.value for w in at.warning)
+    ok(at.button(key="score_old").click().run())                    # "Score again (1)"
+    new = reviews.latest_review(sub["submission_id"])
+    assert new["label"] == "NOT DETECTED" and not reviews.counted_every_repeat(new)
+    assert (new["decision"], new["note"]) == ("flagged", "Looks drafted.")
+    assert at.dataframe[0].value["Detector"].tolist() == ["Not detected"]
+    assert not [b for b in at.button if b.key == "score_old"]       # nothing old is left
+    assert any("changed the verdict from Likely MarkText to Not detected" in c.value for c in at.caption)
+    home = sign_in(new_app(), "prof", "teacherpass")
+    assert not any("made before repeated words counted once" in w.value for w in home.warning)
+
+
+def test_an_answer_survives_an_idle_sign_out_and_the_hand_in_still_says_so(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.text_area(key="editor_" + aid).input("Half an essay about diaries.").run())
+    assert drafts.load("alice", aid)["text"] == "Half an essay about diaries."
+    at.session_state["last_seen"] -= 31 * 60                       # half an hour of typing
+    ok(at.text_area(key="editor_" + aid).input("Half an essay about diaries, and more.").run())
+    assert at.session_state["user"] is None                         # signed out by that click,
+    assert drafts.load("alice", aid)["text"].endswith("and more.")  # after the text was kept
+
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    assert at.text_area(key="editor_" + aid).value.endswith("and more.")
+    assert any("Restored the answer" in c.value for c in at.caption)
+    at.session_state["last_seen"] -= 31 * 60
+    ok(at.button(key="hand_in").click().run())                      # handed in after another quiet spell
+    assert submissions.current_submission(aid, "alice")["version"] == "1"
+    assert drafts.load("alice", aid) is None
+    toasts = [t.value for t in at.toast]
+    assert "Version 1 handed in." in toasts and any("without activity" in t for t in toasts)
+
+
+def test_taking_a_draft_asks_before_it_replaces_the_students_text(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.text_area(key="editor_" + aid).input("My own opening paragraph.").run())
+    ok(at.button(key="assistant_go").click().run())
+    draft = at.session_state["assistant_draft"]["text"]
+    ok(at.button(key="draft_use").click().run())
+    assert at.text_area(key="editor_" + aid).value == "My own opening paragraph."     # asked, not replaced
+    ok(at.button(key="replace_cancel").click().run())
+    assert at.text_area(key="editor_" + aid).value == "My own opening paragraph."
+    ok(at.button(key="draft_use").click().run())
+    ok(at.button(key="replace_below").click().run())
+    assert at.text_area(key="editor_" + aid).value == "My own opening paragraph.\n\n" + draft
+    assert drafts.load("alice", aid)["source"] == "assistant"
+    ok(at.text_area(key="editor_" + aid).input("Something else entirely.").run())
+    ok(at.button(key="assistant_go").click().run())
+    ok(at.button(key="draft_use").click().run())
+    ok(at.button(key="replace_confirm").click().run())
+    assert at.text_area(key="editor_" + aid).value == at.session_state["draft_" + aid] == draft
+
+
+def test_a_draft_still_arrives_when_the_page_reruns_while_the_model_writes(new_app, school, monkeypatch):
+    """A click starts a new run at once and the old run stops at its next
+    touch of the session state, so the draft is written in a thread of its
+    own (common.start_job) and any later run picks it up."""
+    release, real = threading.Event(), assistant.draft
+
+    def slow_draft(*args, **kwargs):
+        release.wait(10)                                           # the model, taking its minute
+        return real(*args, **kwargs)
+    monkeypatch.setattr(assistant, "draft", slow_draft)
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.button(key="assistant_go").click().run())
+    assert any("so far" in p.proto.text for p in at.get("progress"))
+    assert not [b for b in at.button if b.key == "draft_use"]
+    ok(at.button(key="assistant_go").click().run())                # clicked again while it writes
+    assert any("still writing" in i.value for i in at.info)
+    follow(at, "student_home")                                     # the student wanders off
+    release.set()
+    for _ in range(100):
+        if at.session_state["assistant_job"]["done"]:
+            break
+        time.sleep(0.05)
+    follow(at, "student_assignment")
+    assert [b for b in at.button if b.key == "draft_use"]           # the draft is there
+    assert "assistant_job" not in at.session_state
 
 
 def tab_goes_field_to_field(at):

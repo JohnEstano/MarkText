@@ -21,6 +21,19 @@ def test_record_detection_snapshots_the_numbers(course):
     assert reviews.latest_review(sub["submission_id"]) == rev
 
 
+def test_a_score_made_before_repeats_counted_once_is_recognised(course):
+    _, old = _review(course)                         # STATS has no "repeated": the old counting
+    assert reviews.counted_every_repeat(old)
+    sub = submissions.submit(course["assignment"]["assignment_id"], "alice", "another essay text")
+    new = reviews.record_detection(sub, dict(STATS, repeated=0), "run2", "fake/model", "0a1b2c3d", "prof")
+    assert not reviews.counted_every_repeat(new)
+    short = reviews.record_detection(sub, dict(STATS, label="INCONCLUSIVE (short text)"), "run3",
+                                     "fake/model", "0a1b2c3d", "prof")
+    assert not reviews.counted_every_repeat(short)    # inconclusive however repeats are counted
+    assert not reviews.counted_every_repeat(None)
+    assert [r["run_id"] for r in reviews.scorings(sub["submission_id"])] == ["run2", "run3"]
+
+
 def test_decide_and_return(course):
     _, rev = _review(course)
     with pytest.raises(ValueError, match="decision before"):

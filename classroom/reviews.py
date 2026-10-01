@@ -16,6 +16,7 @@ Classroom treats a changed grade). Rows written before these two columns
 existed have them empty and show the decision itself.
 """
 
+import verdict
 from classroom import assignments, audit, classes, paths, store
 
 COLUMNS = ["review_id", "submission_id", "assignment_id", "class_id", "username", "version",
@@ -97,6 +98,24 @@ def get_review(review_id):
         if row["review_id"] == review_id:
             return row
     return None
+
+
+def scorings(submission_id):
+    """Every review row of one submission, oldest first: one per scoring."""
+    return [row for row in _rows() if row["submission_id"] == submission_id]
+
+
+def counted_every_repeat(review):
+    """True for a score made before repeats counted once (2026-09-30). The
+    old counting included every repeated token, which pushes z up on human
+    text, so its verdict may be out of date; scoring the text again gives
+    the current verdict and keeps the decision (CARRIED_OVER). Such rows
+    have no `repeated` value. A text too short to score has none either,
+    but it stays inconclusive however repeats are counted."""
+    if review is None:
+        return False
+    return (str(review.get("repeated", "")).strip() == ""
+            and review.get("label", "") not in ("", verdict.LABEL_INCONCLUSIVE))
 
 
 def list_reviews(assignment_id=None, class_id=None, username=None, latest_only=True):

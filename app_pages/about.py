@@ -36,11 +36,13 @@ if user["role"] == "teacher":
         texts = len(list(paths.submissions_dir().rglob("*.txt"))) if paths.submissions_dir().exists() else 0
         backups = len(list(paths.backups_dir().glob("*"))) if paths.backups_dir().exists() else 0
         reports = len(list(paths.reports_dir().glob("*.csv"))) if paths.reports_dir().exists() else 0
+        unsent = len(list(paths.drafts_dir().rglob("*.json"))) if paths.drafts_dir().exists() else 0
         st.dataframe(pd.DataFrame(table), hide_index=True,
                      column_config={"lines": st.column_config.NumberColumn("data rows")})
-        st.caption("Plus {} submission text files (each with a JSON sidecar), {} reports in "
-                   "data/reports and {} backup copies in data/backups, written before every "
-                   "rewrite.".format(texts, reports, backups))
+        st.caption("Plus {} submission text files (each with a JSON sidecar), {} answers students "
+                   "have not handed in yet in data/drafts, {} reports in data/reports and {} backup "
+                   "copies in data/backups, written before every rewrite.".format(
+                       texts, unsent, reports, backups))
     with st.expander("Configuration (config/watermark_config.json, key hidden)",
                      icon=":material/settings:"):
         st.json(cfg.redacted(cfg.load_config()))

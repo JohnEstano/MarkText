@@ -155,6 +155,64 @@ def engine():
     return eng, lock
 
 
+# ------------------------------------------------------------------ long work
+def start_job(name, work, label, expected_s, **context):
+    """Run work() (a model call of about a minute) in a thread of its own,
+    keeping what it returns in a plain dict at st.session_state[name].
+
+    Not in the page's own run: a click starts a new run at once (Streamlit's
+    fast reruns) and asks the old one to stop, and the old run stops at its
+    next touch of st.session_state, the very write that would have kept the
+    result (SafeSessionState checks for a stop request on every access). The
+    thread never touches st.session_state: it fills in the dict, which every
+    later run of the session sees. The desktop app's worker threads work the
+    same way (main.py). Waits half a second, so quick results and errors
+    (an empty request) show at once."""
+    job = dict(context, label=label, expected_s=expected_s, started=time.time(),
+               done=False, result=None, error=None)
+
+    def run():
+        try:
+            job["result"] = work()
+        except Exception as exc:              # shown on the page by finished_job's caller
+            job["error"] = str(exc) or exc.__class__.__name__
+        finally:
+            job["done"] = True
+    st.session_state[name] = job
+    worker = threading.Thread(target=run, name="marktext-" + name, daemon=True)
+    worker.start()
+    worker.join(timeout=0.5)
+    return job
+
+
+def job_running(name):
+    job = st.session_state.get(name)
+    return job is not None and not job["done"]
+
+
+def finished_job(name):
+    """The job at st.session_state[name] once it has finished, taken out of
+    the session state for the caller to show; None before that. While it
+    runs: a progress bar that refreshes itself every second and reruns the
+    whole page when the job ends, so the result appears without a click."""
+    job = st.session_state.get(name)
+    if job is None:
+        return None
+    if job["done"]:
+        del st.session_state[name]
+        return job
+
+    @st.fragment(run_every=1.0)
+    def progress():
+        if job["done"]:
+            st.rerun()                        # the whole page, which then shows the result
+        elapsed = time.time() - job["started"]
+        st.progress(min(elapsed / max(job["expected_s"], 1.0), 0.99),
+                    text="{} {:.0f} s so far.".format(job["label"], elapsed))
+    progress()
+    return None
+
+
 # ------------------------------------------------------------------ people
 def current_user():
     return st.session_state.get("user")
@@ -188,8 +246,12 @@ def check_idle(config):
     limit = idle_minutes(config)
     now = time.time()
     if state.get("user") and limit and state.get("last_seen") and now - state["last_seen"] > limit * 60:
+        # what this click already did (its callbacks run first, e.g. "Version 2
+        # handed in.") is still said after the sign-out
+        done = list(state.get("flash", []))
         sign_out()
         init_state()
+        st.session_state["flash"] = done
         flash("You were signed out after {} minutes without activity.".format(limit), ":material/timer:")
     state["last_seen"] = now
 

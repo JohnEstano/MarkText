@@ -27,6 +27,21 @@ def test_one_detection_writes_the_log_and_the_review(course):
     assert rev["key_id"] == "0a1b2c3d"
 
 
+def test_old_scores_are_scored_again_and_keep_the_decision(course):
+    aid = course["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", "a human essay " * 40)
+    old_stats = {"num_tokens_scored": 150, "green_fraction": 0.62, "z_score": 4.14, "p_value": 1.7e-5,
+                 "label": "LIKELY MARKTEXT", "device": "cpu"}      # no "repeated": the old counting
+    old = reviews.record_detection(sub, old_stats, "run1", "fake/model", "0a1b2c3d", "prof")
+    reviews.decide(old["review_id"], "flagged", "Looks drafted.", "prof")
+    assert [s["submission_id"] for s in detection.old_scores(aid)] == [sub["submission_id"]]
+    run = detection.detect_many(FakeEngine(), threading.Lock(), detection.old_scores(aid), "prof")
+    new = run["written"][0]
+    assert new["label"] == "NOT DETECTED" and new["repeated"] == "0"
+    assert (new["decision"], new["note"]) == ("flagged", "Looks drafted.")      # carried over
+    assert detection.old_scores(aid) == []
+
+
 def test_assistant_draft_is_logged_with_its_provenance(course):
     eng, lock = FakeEngine(), threading.Lock()
     task = course["assignment"]

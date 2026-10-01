@@ -17,7 +17,8 @@ STATES = ("not submitted", "awaiting detection", "awaiting decision", "decided",
 REPORT_COLUMNS = ["username", "display_name", "state", "version", "submitted_at", "source",
                   "words", "tokens_scored", "green_pct", "z_score", "label", "decision", "note",
                   "returned", "returned_at", "earlier_flag", "late", "points"]
-FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at"]
+# old_count: scored before repeats counted once (reviews.counted_every_repeat)
+FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at", "old_count"]
 SUMMARY_COLUMNS = ["assignment_id", "title", "due_at", "status", "students", "submitted",
                    "detected", "likely", "possible", "not_detected", "inconclusive", "accepted",
                    "flagged", "needs_review", "returned", "late", "mean_z", "points", "mean_points"]
@@ -55,7 +56,7 @@ def assignment_frame(assignment_id):
                         columns=reviews.COLUMNS)[
         ["submission_id", "review_id", "tokens_scored", "green_pct", "z_score", "label",
          "decision", "note", "returned", "returned_at", "detected_at", "returned_decision",
-         "returned_note", "points", "returned_points"]]
+         "returned_note", "points", "returned_points", "repeated"]]
 
     # a resubmission becomes the current version, but a flag on an earlier
     # version must not disappear with it
@@ -66,6 +67,7 @@ def assignment_frame(assignment_id):
     df = roster.merge(subs, on="username", how="left").fillna("")
     df = df.merge(revs, on="submission_id", how="left").fillna("")
     df["state"] = df.apply(_state, axis=1) if len(df) else pd.Series(dtype=str)
+    df["old_count"] = df.apply(reviews.counted_every_repeat, axis=1) if len(df) else pd.Series(dtype=bool)
     for col in NUMERIC:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df["returned"] = df["state"] == "returned"
@@ -150,7 +152,7 @@ def teacher_overview(username, now=None):
     student appears at most once per assignment."""
     my_classes = classes.list_classes(username)
     students, joined_this_week, handed_in = set(), set(), []
-    queue, flags, scores, class_rows = [], [], [], []
+    queue, flags, scores, class_rows, old = [], [], [], [], []
     for c in my_classes:
         cid = c["class_id"]
         active = classes.roster(cid, "active")
@@ -172,13 +174,17 @@ def teacher_overview(username, now=None):
                               "due_at": task["due_at"],
                               "awaiting_detection": counts["awaiting detection"],
                               "awaiting_decision": counts["awaiting decision"]})
+            if frame["old_count"].any():
+                old.append({"class_id": cid, "assignment_id": task["assignment_id"], "title": task["title"],
+                            "count": int(frame["old_count"].sum())})
             for rec in frame[frame["review_id"] != ""].to_dict("records"):
                 point = {"student": rec["display_name"], "username": rec["username"],
                          "assignment": task["title"], "assignment_id": task["assignment_id"],
                          "class_id": cid, "class_name": c["name"], "version": int(rec["version"]),
                          "tokens_scored": rec["tokens_scored"], "z_score": rec["z_score"],
                          "label": rec["label"], "decision": rec["decision"],
-                         "detected_at": rec["detected_at"], "review_id": rec["review_id"]}
+                         "detected_at": rec["detected_at"], "review_id": rec["review_id"],
+                         "old_count": bool(rec["old_count"])}
                 scores.append(point)
                 if rec["label"] == verdict.LABEL_LIKELY or rec["decision"] == "flagged":
                     flags.append(point)
@@ -193,7 +199,8 @@ def teacher_overview(username, now=None):
             "awaiting_detection": sum(r["not_scored"] for r in class_rows),
             "awaiting_decision": sum(r["to_decide"] for r in class_rows),
             "scored": len(scores), "flagged": len(flags),
-            "queue": queue, "recent_flags": flags[:5], "scores": scores, "class_rows": class_rows}
+            "queue": queue, "recent_flags": flags[:5], "scores": scores, "class_rows": class_rows,
+            "old_scores": old}
 
 
 def student_overview(username):

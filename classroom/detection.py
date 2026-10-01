@@ -87,6 +87,16 @@ def pending(assignment_id):
     return sorted(rows, key=lambda s: s["submitted_at"])
 
 
+def old_scores(assignment_id):
+    """Current submissions of students still in the class whose latest score
+    counted every repeat (reviews.counted_every_repeat), oldest first."""
+    latest = reviews.latest_by_submission(assignment_id)
+    rows = [s for s in submissions.list_submissions(assignment_id)
+            if reviews.counted_every_repeat(latest.get(s["submission_id"]))
+            and classes.is_member(s["class_id"], s["username"])]
+    return sorted(rows, key=lambda s: s["submitted_at"])
+
+
 def drafted_with(submission):
     """The key id an assistant draft was made with (from its sidecar), or
     None for a text typed or uploaded by a person."""

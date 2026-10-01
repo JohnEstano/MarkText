@@ -119,8 +119,12 @@ request = state.get("run_detect")
 if request and request["assignment_id"] == assignment_id:
     state["run_detect"] = None
     todo = (detection.pending(assignment_id) if request["what"] == "all"
+            else detection.old_scores(assignment_id) if request["what"] == "old"
             else [s for s in [submissions.get_submission(request["what"])] if s])
     if todo:
+        # the verdict before, so a score that changes it says so
+        before = {s["submission_id"]: (reviews.latest_review(s["submission_id"]) or {}).get("label", "")
+                  for s in todo}
         engine, lock = common.scorer()           # no model needed to score
         with st.status("Scoring {} submission{}...".format(len(todo), "" if len(todo) == 1 else "s"),
                        expanded=True) as status:
@@ -130,6 +134,9 @@ if request and request["assignment_id"] == assignment_id:
 
             def progress(done, total, submission, review):
                 outcome = common.verdict_text(review["label"]) if review else "skipped"
+                was = before.get(submission["submission_id"])
+                if review and was and was != review["label"]:
+                    outcome = "{} → {}".format(common.verdict_text(was), outcome)
                 bar.progress(done / total, text="{}/{}  {}: {}".format(
                     done, total, common.md(common.display_name(submission["username"])), outcome))
             run = detection.detect_many(engine, lock, todo, teacher, on_progress=progress,
@@ -179,7 +186,13 @@ with st.container(horizontal=True, vertical_alignment="center"):
     st.button("Score all not scored ({})".format(pending), type="primary", icon=":material/fact_check:",
               key="score_all", disabled=pending == 0, on_click=request_scoring, args=("all",),
               help="Runs the watermark detector on every submission that has no score yet.")
-    decided = [r for r in frame.loc[frame["state"] == "decided", "review_id"]]
+    old = int(frame["old_count"].sum())
+    if old:
+        st.button("Score again ({})".format(old), icon=":material/update:", key="score_old",
+                  on_click=request_scoring, args=("old",),
+                  help="These were scored before repeated words counted once, so their verdicts may "
+                       "be out of date. Decisions, notes and what students were shown are kept.")
+    decided =[r for r in frame.loc[frame["state"] == "decided", "review_id"]]
     st.button("Return all decided ({})".format(len(decided)), icon=":material/assignment_return:",
               key="return_all", disabled=not decided, on_click=common.open_dialog, args=("return_all",),
               kwargs={"review_ids": decided, "teacher": teacher},
@@ -225,7 +238,8 @@ with st.container(border=True):
         "Words": frame["words"],
         "Green %": frame["green_pct"],
         "z": frame["z_score"],
-        "Detector": frame["label"].map(lambda l: common.verdict_text(l) if l else ""),
+        "Detector": [common.verdict_text(label) + (" (old count)" if old_count else "") if label else ""
+                     for label, old_count in zip(frame["label"], frame["old_count"])],
         "Decision": frame["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
         "Earlier flag": frame["earlier_flag"],
         "Late": frame["late"],
@@ -348,6 +362,20 @@ with st.container(border=True):
                     st.caption(note)
                 st.caption("Scored {} with {}, key {}.".format(
                     common.when(review["detected_at"]), review["model_id"], review["key_id"] or "unknown"))
+                if reviews.counted_every_repeat(review):
+                    st.warning("Scored with the earlier counting, which counted every repeated word and "
+                               "makes human writing look more watermarked than it is. Score again for "
+                               "the current verdict; your decision and note are kept.",
+                               icon=":material/update:")
+                    st.button("Score again", key="score_again_old", icon=":material/update:",
+                              on_click=request_scoring, args=(sub["submission_id"],))
+                earlier = reviews.scorings(sub["submission_id"])[:-1]
+                if (earlier and earlier[-1]["label"] != review["label"] and review["decision"] != "pending"
+                        and review["decided_at"] and review["decided_at"] <= review["detected_at"]):
+                    st.caption(":material/info: Scoring again changed the verdict from {} to {}. Your "
+                               "decision was made before that; check that it still fits.".format(
+                                   common.verdict_text(earlier[-1]["label"]),
+                                   common.verdict_text(review["label"])))
                 config = common.load_config()
                 current_key = config["watermark"]["key_id"]
                 own_key = detection.drafted_with(sub)
