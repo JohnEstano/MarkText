@@ -463,6 +463,32 @@ def metric_row(items):
             st.metric(label, value, help=help_text, border=True)
 
 
+# Streamlit's password box has a show-password button, and Tab stops on it
+# between two fields. Streamlit already keeps its own Clear button out of the
+# Tab order (tabIndex -1); this does the same for the show-password button,
+# which stays clickable. st.html is not iframed, so the script runs in the app
+# page; the observer, made once per browser tab, also catches password boxes
+# drawn later (another page, the Register form).
+_SKIP_SHOW_PASSWORD = """<script>
+(() => {
+  const skip = () => document.querySelectorAll(
+    '[data-testid="stTextInputRootElement"] button[aria-label$="password"]'
+  ).forEach((button) => { if (button.tabIndex !== -1) button.tabIndex = -1; });
+  skip();
+  if (!window.marktextSkipShowPassword) {
+    window.marktextSkipShowPassword = new MutationObserver(skip);
+    window.marktextSkipShowPassword.observe(document.body, {childList: true, subtree: true});
+  }
+})();
+</script>"""
+
+
+def skip_show_password_buttons():
+    """Tab goes from a password field straight to the next field. Call it
+    below the forms: the element has no height but adds one gap above it."""
+    st.html(_SKIP_SHOW_PASSWORD, unsafe_allow_javascript=True)
+
+
 _MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>$])")
 
 

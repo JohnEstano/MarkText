@@ -6,6 +6,11 @@ enrolled right away. A username the teacher imported before the student
 registered is an invitation; it becomes membership when the student joins
 with the class code, because anyone could register a username first, and
 the code is what shows the student is in the class.
+
+Two columns: the name and what MarkText is on the left, the forms on the
+right (stacked on a phone). The rules for usernames and passwords are
+captions under the fields rather than help tooltips, so Tab goes from one
+field to the next.
 """
 
 import streamlit as st
@@ -30,14 +35,16 @@ def _enter(user, message, weak=False):
     st.rerun()
 
 
-_, middle, _ = st.columns([1, 1.25, 1])
-with middle:
-    st.space("large")
+st.space("large")
+# top-aligned: the name stays put when Register opens a longer form
+_, brand, forms, _ = st.columns([0.35, 1, 1, 0.35], gap="large")
+with brand:
     st.image(common.MARK, width=52)
     st.title("MarkText Classroom", anchor=False)
-    st.caption("A class space for written work. Teachers can tell which submissions were "
-               "drafted with MarkText's writing assistant.")
+    st.markdown("A class space for written work. Teachers can tell which submissions were "
+                "drafted with MarkText's writing assistant.")
 
+with forms:
     if not accounts.has_teacher():
         with st.container(border=True):
             st.subheader("Set up the classroom", anchor=False)
@@ -45,9 +52,10 @@ with middle:
                        "classes with a code. More teachers can be added later from the command line.")
             with st.form("setup", border=False):
                 username = st.text_input("Username", placeholder="reyes", key="setup_username")
+                st.caption(accounts.USERNAME_HINT)
                 name = st.text_input("Display name", placeholder="Prof. Reyes", key="setup_name")
-                password = st.text_input("Password", type="password", key="setup_password",
-                                         help="At least {} characters.".format(accounts.MIN_PASSWORD))
+                password = st.text_input("Password", type="password", key="setup_password")
+                st.caption(accounts.PASSWORD_HINT)
                 repeat = st.text_input("Repeat the password", type="password", key="setup_repeat")
                 create = st.form_submit_button("Create teacher account", type="primary",
                                                width="stretch", key="setup_submit")
@@ -61,6 +69,7 @@ with middle:
                     st.error(common.md(str(exc)), icon=":material/error:")
                 else:
                     _enter(user, "Welcome, {}. Your classroom is ready.".format(user["display_name"]))
+        common.skip_show_password_buttons()
         st.stop()
 
     mode = st.segmented_control("Account", ["Sign in", "Register"], default="Sign in",
@@ -88,14 +97,11 @@ with middle:
                        "administrator.")
             with st.form("register", border=False):
                 username = st.text_input("Username", placeholder="alice.santos",
-                                         key="register_username",
-                                         help="3 to 24 characters: lowercase letters, digits, dots, "
-                                              "dashes or underscores; the first and the last are a "
-                                              "letter or a digit.")
+                                         key="register_username")
+                st.caption(accounts.USERNAME_HINT)
                 name = st.text_input("Your name", placeholder="Alice Santos", key="register_name")
-                password = st.text_input("Password", type="password", key="register_password",
-                                         help="At least {} characters, not a common password and "
-                                              "without your username.".format(accounts.MIN_PASSWORD))
+                password = st.text_input("Password", type="password", key="register_password")
+                st.caption(accounts.PASSWORD_HINT)
                 repeat = st.text_input("Repeat the password", type="password", key="register_repeat")
                 code = st.text_input("Class code (optional)", placeholder="ABC-234",
                                      key="register_code")
@@ -117,3 +123,4 @@ with middle:
                         except ValueError as exc:
                             message = "Account created, but the class code did not work: {}".format(exc)
                     _enter(user, message)
+    common.skip_show_password_buttons()

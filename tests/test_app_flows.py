@@ -599,3 +599,41 @@ def test_after_a_key_rotation_a_draft_is_scored_with_its_own_key(new_app, school
     review = reviews.latest_review(submissions.current_submission(aid, "alice")["submission_id"])
     assert review["key_id"] == old and review["label"] == "LIKELY MARKTEXT"
     assert any("the key this draft was made with" in c.value for c in teacher.caption)
+
+
+def tab_goes_field_to_field(at):
+    """No help tooltip on any text box (each one is a Tab stop), and the
+    script that takes the show-password buttons out of the Tab order."""
+    assert [t.label for t in at.text_input if t.help] == []
+    assert any(h.proto.unsafe_allow_javascript and 'aria-label$="password"' in h.proto.body
+               for h in at.get("html"))
+
+
+def test_the_sign_in_page_has_the_name_beside_the_forms(new_app, people):
+    at = ok(new_app())
+    brand, forms = at.columns[1], at.columns[2]
+    assert [t.value for t in brand.title] == ["MarkText Classroom"]
+    assert [t.key for t in forms.text_input] == ["login_username", "login_password"]
+    tab_goes_field_to_field(at)
+    ok(at.segmented_control(key="login_mode").set_value("Register").run())
+    forms = at.columns[2]
+    assert [t.key for t in forms.text_input] == ["register_username", "register_name", "register_password",
+                                                 "register_repeat", "register_code"]
+    hints = [c.value for c in forms.caption]
+    assert accounts.USERNAME_HINT in hints and accounts.PASSWORD_HINT in hints
+    tab_goes_field_to_field(at)
+
+
+def test_the_first_run_setup_has_the_name_beside_the_form(new_app):
+    at = ok(new_app())
+    assert [t.value for t in at.columns[1].title] == ["MarkText Classroom"]
+    assert [t.key for t in at.columns[2].text_input] == ["setup_username", "setup_name", "setup_password",
+                                                         "setup_repeat"]
+    tab_goes_field_to_field(at)
+
+
+def test_the_password_change_has_no_tooltips(new_app, people):
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "account")
+    assert accounts.PASSWORD_HINT in [c.value for c in at.caption]
+    tab_goes_field_to_field(at)

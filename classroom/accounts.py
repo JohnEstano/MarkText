@@ -34,6 +34,11 @@ MAX_DISPLAY_NAME = 60
 # a username is also a folder name and Windows drops a trailing dot ("alice."
 # would share the folder of "alice")
 USERNAME_RULE = re.compile(r"[a-z0-9](?:[a-z0-9_.-]{1,22}[a-z0-9])")
+# the rules in words, shown under the form fields (password_problem below)
+USERNAME_HINT = ("3 to 24 characters: lowercase letters, digits, dots, dashes or underscores, "
+                 "starting and ending with a letter or a digit.")
+PASSWORD_HINT = ("At least {} characters, four of them different; not a common password and "
+                 "without your username.".format(MIN_PASSWORD))
 # names Windows keeps for devices, with or without an extension ("nul.txt")
 WINDOWS_RESERVED = frozenset(["con", "prn", "aux", "nul"] + ["com%d" % i for i in range(1, 10)]
                              + ["lpt%d" % i for i in range(1, 10)])

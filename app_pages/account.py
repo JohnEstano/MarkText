@@ -36,8 +36,8 @@ with right:
         st.subheader("Password", anchor=False)
         with st.form("password", border=False, clear_on_submit=True):
             old = st.text_input("Current password", type="password", key="account_old")
-            new = st.text_input("New password", type="password", key="account_new",
-                                help="At least {} characters.".format(accounts.MIN_PASSWORD))
+            new = st.text_input("New password", type="password", key="account_new")
+            st.caption(accounts.PASSWORD_HINT)
             repeat = st.text_input("Repeat the new password", type="password", key="account_repeat")
             if st.form_submit_button("Change password", key="account_change"):
                 try:
@@ -56,3 +56,4 @@ with right:
             st.caption("Teacher accounts are created on the server, never from the sign-in page:")
             st.code("python -m classroom.cli create-teacher <username> --display-name \"<name>\"",
                     language="bash")
+common.skip_show_password_buttons()
