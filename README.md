@@ -93,7 +93,7 @@ All four numbers live in `config/watermark_config.json` and are applied in one p
 
 ## The key
 
-The hashing key is a shared secret: whoever holds it can verify the watermark and can also produce text that carries it. On first run MarkText generates a private key and writes it to `config/watermark_config.json`, which is git-ignored; `config/watermark_config.example.json` shows the schema. Changing the key makes previously generated text undetectable, so texts are tied to the installation that made them. If a config carries Hugging Face's public default key (15485863), the teacher's home page and the desktop app warn about it.
+The hashing key is a shared secret: whoever holds it can verify the watermark and can also produce text that carries it. On first run MarkText generates a private key and writes it to `config/watermark_config.json`, which is git-ignored; `config/watermark_config.example.json` shows the schema. Changing the key makes previously generated text undetectable, so texts are tied to the installation that made them. If a config carries Hugging Face's public default key (15485863), the teacher's home page and the desktop app warn about it and point to `rotate-key` (below).
 
 The key never leaves the config file: generation results, sidecars, reports and the About page show only the public parameters (`config.public_watermark`) and a **key id**, a random label stored beside the key and regenerated with it. A review records the key id it was scored with, so the review page can say when a submission was scored under an older key. The key id is random on purpose: any hash of a 31-bit key could be reversed by trying every value.
 

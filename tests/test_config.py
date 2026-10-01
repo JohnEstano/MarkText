@@ -81,7 +81,14 @@ def test_public_default_key_is_kept_but_flagged(tmp_path):
     notes = []
     c = cfg.load_config(path, notes)
     assert c["watermark"]["hashing_key"] == cfg.HF_PUBLIC_KEY
-    assert any("public default" in n for n in notes)
+    note = next(n for n in notes if "public default" in n)
+    # the way out keeps the old key, so drafts made with it still score
+    assert "python -m classroom.cli rotate-key" in note and "Delete" not in note
+    old, _ = cfg.rotate_key(path)
+    notes = []
+    c = cfg.load_config(path, notes)
+    assert not any("public default" in n for n in notes)
+    assert c["watermark"]["retired_keys"] == [{"hashing_key": cfg.HF_PUBLIC_KEY, "key_id": old}]
 
 
 def test_a_broken_file_stops_and_is_left_alone(tmp_path):

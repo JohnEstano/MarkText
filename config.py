@@ -285,8 +285,10 @@ def load_config(path=None, notes=None):
     if wm["hashing_key"] == HF_PUBLIC_KEY:
         notes.append("The hashing key is Hugging Face's public default (15485863): "
                      "anyone with transformers can produce or verify this watermark. "
-                     "Delete config/watermark_config.json to get a private key "
-                     "(old texts will then no longer be detectable).")
+                     "Run `python -m classroom.cli rotate-key` to switch to a private key. "
+                     "The old key is kept under `watermark.retired_keys`, so students' assistant "
+                     "drafts made with it are still scored with it; Detect checks pasted text "
+                     "with the new key only.")
     return config
 
 
