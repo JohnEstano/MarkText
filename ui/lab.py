@@ -19,6 +19,7 @@ import pandas as pd
 import streamlit as st
 
 import history
+from ui import charts
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 GENERATED_DIR = BASE_DIR / "generated"
@@ -106,11 +107,15 @@ def summarise(df, by=("result",)):
 
 
 def z_chart(df, threshold):
-    """Scatter of z against tokens scored, with a rule at the threshold."""
-    base = alt.Chart(df).mark_circle(size=70).encode(
+    """Scatter of z against tokens scored, with a rule at the threshold. The
+    verdicts are written as on the other pages ("Likely MarkText"), and each
+    has a shape as well as a colour."""
+    df = df.assign(result=df["result"].map(lambda r: charts.SHORT.get(r, r)))
+    base = alt.Chart(df).mark_point(size=70, filled=True).encode(
         x=alt.X("tokens_scored:Q", title="tokens scored"),
         y=alt.Y("z_score:Q", title="z-score"),
-        color=alt.Color("result:N", title="result"),
+        color=alt.Color("result:N", legend=charts.LEGEND),
+        shape=alt.Shape("result:N", legend=charts.LEGEND),
         tooltip=["run_id", "source", "mode", "tokens_scored", "z_score", "result"])
     rule = alt.Chart(pd.DataFrame({"z": [threshold]})).mark_rule(
         strokeDash=[6, 4], color="#a33b3b").encode(y="z:Q")

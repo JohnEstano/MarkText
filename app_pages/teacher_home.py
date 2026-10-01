@@ -131,7 +131,7 @@ with st.container(horizontal=True):
     st.metric("Students", overview["students"], delta=overview["students_new"],
               delta_description="joined this week", border=True,
               help="Students active in at least one of your classes.")
-    st.metric("Handed in", overview["handed_in"], delta=overview["handed_in_week"],
+    st.metric("Versions handed in", overview["handed_in"], delta=overview["handed_in_week"],
               delta_description="this week", border=True,
               help="Every version handed in, counting resubmissions.")
     st.metric("To decide", overview["awaiting_decision"],
@@ -208,7 +208,7 @@ with right.container(border=True, height="stretch"):
                 st.markdown("**{}**{}".format(common.md(row["name"]),
                                               " · " + common.md(row["term"]) if row["term"] else ""))
                 facts = ["{} student{}".format(row["students"], "" if row["students"] == 1 else "s"),
-                         "{} open".format(row["open"]), "join code {}".format(row["join_code"])]
+                         "{} open".format(row["open"]), "class code {}".format(row["join_code"])]
                 if row["to_decide"]:
                     facts.insert(2, "{} to decide".format(row["to_decide"]))
                 if row["not_scored"]:

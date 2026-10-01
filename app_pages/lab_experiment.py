@@ -7,7 +7,7 @@ import time
 import streamlit as st
 
 import experiment
-from ui import common, lab
+from ui import charts, common, lab
 
 common.require_role("teacher")
 state = st.session_state
@@ -43,8 +43,12 @@ with st.container(border=True):
     est_s = sum(int(n_prompts) * int(runs) * L * (1 / 4.3 + 1 / 8.0) for L in lengths)
     st.caption("{} generations, roughly {:.0f} min on this CPU. For runs over an hour use the command "
                "line, which can be interrupted and resumed:".format(total, est_s / 60))
-    st.code("python experiment.py --lengths {} --runs {} --seed {}".format(
-        " ".join(str(L) for L in lengths), int(runs), int(seed_base)), language="bash")
+    # the same batch as this page would run: without --prompts the command line uses all of them
+    command = "python experiment.py --prompts {} --lengths {} --runs {} --seed {}".format(
+        int(n_prompts), " ".join(str(L) for L in lengths), int(runs), int(seed_base))
+    if resume != "(new batch)":
+        command += " --resume {}".format(resume.split(" (")[0])
+    st.code(command, language="bash")
     start = st.button("Run experiment", type="primary", icon=":material/play_arrow:",
                       disabled=not lengths or not all_prompts, key="exp_run")
 
@@ -103,7 +107,7 @@ with st.container(border=True):
             "possible_or_above_rate": st.column_config.NumberColumn("z ≥ possible", format="percent"),
             "inconclusive_rate": st.column_config.NumberColumn("inconclusive", format="percent")})
         if not bdf.empty:
-            st.altair_chart(lab.z_chart(bdf.assign(result=bdf["mode"] + " / " + bdf["result"]),
+            st.altair_chart(lab.z_chart(bdf.assign(result=bdf["mode"] + " / " + bdf["result"].map(lambda r: charts.SHORT.get(r, r))),
                                         float(config["detection_threshold"])))
         state["exp_summary_export"] = summary
         st.download_button("Export batch summary", data=summary.to_csv(index=False).encode("utf-8"),

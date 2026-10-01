@@ -15,6 +15,10 @@ VERDICT_COLOURS = {
 }
 SHORT = {verdict.LABEL_LIKELY: "Likely MarkText", verdict.LABEL_POSSIBLE: "Possible watermark",
          verdict.LABEL_NOT_DETECTED: "Not detected", verdict.LABEL_INCONCLUSIVE: "Inconclusive"}
+# a shape per verdict as well as a colour: colour must not be the only signal
+SHAPES = {verdict.LABEL_LIKELY: "square", verdict.LABEL_POSSIBLE: "triangle-up",
+          verdict.LABEL_NOT_DETECTED: "circle", verdict.LABEL_INCONCLUSIVE: "diamond"}
+LEGEND = alt.Legend(orient="bottom", title=None, labelLimit=0)     # labelLimit 0: never cut a label
 
 
 def theme():
@@ -32,13 +36,15 @@ def scores_chart(points, detection, possible, height=300):
     df["verdict"] = df["label"].map(lambda l: SHORT.get(l, l))
     df["who"] = df["student"] + " · v" + df["version"].astype(str)
     domain = [SHORT[l] for l in verdict.LABELS]
-    dots = alt.Chart(df).mark_circle(size=110, opacity=0.9).encode(
+    dots = alt.Chart(df).mark_point(size=110, opacity=0.9, filled=True).encode(
         x=alt.X("tokens_scored:Q", title="tokens scored", scale=alt.Scale(zero=False),
                 axis=alt.Axis(tickCount=6, format="d")),
         y=alt.Y("z_score:Q", title="z-score"),
         color=alt.Color("verdict:N", title=None,
                         scale=alt.Scale(domain=domain, range=[colours[l] for l in verdict.LABELS]),
-                        legend=alt.Legend(orient="bottom")),
+                        legend=LEGEND),
+        shape=alt.Shape("verdict:N", scale=alt.Scale(domain=domain, range=[SHAPES[l] for l in verdict.LABELS]),
+                        legend=LEGEND),
         tooltip=[alt.Tooltip("who:N", title="student"), alt.Tooltip("assignment:N"),
                  alt.Tooltip("z_score:Q", title="z", format=".2f"),
                  alt.Tooltip("tokens_scored:Q", title="tokens"), alt.Tooltip("verdict:N")])

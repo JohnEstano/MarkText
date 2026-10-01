@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 
 import history
-from ui import common, lab
+from ui import charts, common, lab
 
 common.require_role("teacher")
 state = st.session_state
@@ -55,6 +55,18 @@ def clear_history_dialog():
                                      ":material/delete_sweep:")
 
 
+def pick_record():
+    """A row selected in the records table: its run id goes into the box
+    below, so the record can be changed without typing its id."""
+    try:
+        rows = list(state["history_table"]["selection"]["rows"])
+    except (KeyError, TypeError):
+        rows = []
+    shown = state.get("_history_rows", [])
+    if rows and rows[0] < len(shown):
+        state["manage_id"] = shown[rows[0]]
+
+
 def on_update_record():
     rid = state.get("manage_id", "").strip()
     try:
@@ -66,7 +78,7 @@ def on_update_record():
 
 
 st.title("History", anchor=False)
-st.caption("Every analysis, one row each, from the lab and from classroom reviews.")
+st.caption("Every score, one row each, from the lab and from classroom reviews.")
 if state["export_msg"]:
     st.success(state["export_msg"], icon=":material/check_circle:")
     state["export_msg"] = ""
@@ -81,14 +93,15 @@ except (OSError, pd.errors.ParserError, UnicodeDecodeError) as exc:
     st.error("Could not read the history CSV: {}".format(exc), icon=":material/error:")
 
 if df.empty:
-    common.empty_state("No detections yet", "Analyze a text on the Detect page, score a "
+    common.empty_state("No detections yet", "Score a text on the Detect page, score a "
                        "submission on the Review page, or run an experiment.", "history")
     st.stop()
 
 with st.container(border=True):
     f1, f2, f3, f4 = st.columns([2, 2, 2, 1])
     results = sorted(df["result"].unique())
-    pick = f1.multiselect("Result", results, default=results, key="hist_results")
+    pick = f1.multiselect("Result", results, default=results, key="hist_results",
+                          format_func=lambda r: charts.SHORT.get(r, r))
     query = f2.text_input("Filename contains", "", key="hist_query")
     dmin, dmax = df["timestamp"].min().date(), df["timestamp"].max().date()
     dates = f3.date_input("Date range", (dmin, dmax), min_value=dmin, max_value=dmax, key="hist_dates")
@@ -111,7 +124,7 @@ mask &= df["tokens_scored"] >= min_tok
 filtered = df[mask]
 
 common.metric_row([
-    ("Analyses in view", "{:,}".format(len(filtered)), "of {:,} in the file".format(len(df))),
+    ("Scores in view", "{:,}".format(len(filtered)), "of {:,} in the file".format(len(df))),
     ("Mean z-score", "{:.2f}".format(filtered["z_score"].mean()) if len(filtered) else "–", None),
     ("Likely MarkText", "{:.0%}".format((filtered["result"] == "LIKELY MARKTEXT").mean())
      if len(filtered) else "–", "Share of rows at or above the detection threshold."),
@@ -135,6 +148,9 @@ else:
         with st.container(border=True):
             st.subheader("Summary by {}result".format("mode and " if has_modes else ""), anchor=False)
             st.dataframe(summary, hide_index=True, column_config={
+                "mode": st.column_config.TextColumn("Mode"),
+                "result": st.column_config.TextColumn("Result"),
+                "analyses": st.column_config.NumberColumn("Scores", format="%d"),
                 "mean_z": st.column_config.NumberColumn("mean z", format="%.2f"),
                 "mean_green_pct": st.column_config.NumberColumn("mean green %", format="%.1f"),
                 "mean_tokens": st.column_config.NumberColumn("mean tokens", format="%.0f")})
@@ -161,19 +177,39 @@ else:
             st.caption("{:,} records".format(len(ordered)))
             current = st.pagination(pages, key="history_page")
         start = (current - 1) * PER_PAGE
-        table_slot.dataframe(ordered.iloc[start:start + PER_PAGE], hide_index=True, placeholder="",
-                         column_config={
-            "timestamp": st.column_config.DatetimeColumn(format="YYYY-MM-DD HH:mm:ss"),
-            "green_pct": st.column_config.NumberColumn("green %", format="%.2f"),
+        shown = ordered.iloc[start:start + PER_PAGE]
+        state["_history_rows"] = list(shown["run_id"])
+        st.caption("Select a row to change its note or filename below.")
+        table_slot.dataframe(shown, hide_index=True, placeholder="", key="history_table",
+                             on_select=pick_record, selection_mode="single-row", column_config={
+            "run_id": st.column_config.TextColumn("Run"),
+            "timestamp": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm:ss"),
+            "source": st.column_config.TextColumn("Source"),
+            "filename": st.column_config.TextColumn("File"),
+            "mode": st.column_config.TextColumn("Mode"),
+            "batch_id": st.column_config.TextColumn("Batch"),
+            "max_new_tokens": st.column_config.NumberColumn("Max tokens", format="%d"),
+            "seed": st.column_config.NumberColumn("Seed", format="%d"),
+            "gen_tokens": st.column_config.NumberColumn("Tokens made", format="%d"),
+            "tokens_scored": st.column_config.NumberColumn("Tokens scored", format="%d"),
+            "green_tokens": st.column_config.NumberColumn("Green", format="%d"),
+            "green_pct": st.column_config.NumberColumn("Green %", format="%.2f"),
             "z_score": st.column_config.NumberColumn("z", format="%.2f"),
-            "p_value": st.column_config.NumberColumn(format="%.2e"),
-            "repeated": st.column_config.NumberColumn(format="%d", help="Repeated n-grams, counted once"),
+            "p_value": st.column_config.NumberColumn("p", format="%.2e"),
+            "result": st.column_config.TextColumn("Result"),
+            "bias": st.column_config.NumberColumn("Bias"),
+            "greenlist_ratio": st.column_config.NumberColumn("Green-list ratio"),
+            "seeding_scheme": st.column_config.TextColumn("Seeding"),
+            "context_width": st.column_config.NumberColumn("Context", format="%d"),
+            "device": st.column_config.TextColumn("Device"),
+            "note": st.column_config.TextColumn("Note"),
+            "repeated": st.column_config.NumberColumn("Repeats", format="%d", help="Repeated n-grams, counted once"),
             "passage_z": st.column_config.NumberColumn("passage z", format="%.2f",
                                                        help="z of the strongest 150-token passage"),
             "passage_p": st.column_config.NumberColumn("passage p", format="%.2e",
                                                        help="Its p-value, corrected for every passage tried")})
 
-with st.expander("Manage one record by its run id", icon=":material/edit:"):
+with st.expander("Manage one record by its run id", icon=":material/edit:", expanded=bool(state.get("manage_id"))):
     rid = st.text_input("Run id", key="manage_id", placeholder="843167dd").strip()
     record = history.find_record(rid) if rid else None
     if rid and record is None:
@@ -191,7 +227,7 @@ with st.expander("Manage one record by its run id", icon=":material/edit:"):
     common.error_here("manage_record")
 
 with st.container(horizontal=True, vertical_alignment="center"):
-    st.caption("{:,} analyses in {}. Writes go through history.py (csv module); this page reads "
+    st.caption("{:,} scores in {}. Writes go through history.py (csv module); this page reads "
                "with pandas and writes only new files.".format(len(df), history.HISTORY_PATH.name))
     st.button("Clear history", icon=":material/delete_sweep:", key="clear_history",
               on_click=common.open_dialog, args=("clear_history",))

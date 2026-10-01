@@ -84,7 +84,7 @@ if current is None:
         st.button("New class", type="primary", icon=":material/add:", on_click=common.open_dialog,
                   args=("create_class",), kwargs={"teacher": teacher}, key="classes_new")
     if not mine:
-        common.empty_state("No classes yet", "Create a class, then share its join code with your "
+        common.empty_state("No classes yet", "Create a class, then share its class code with your "
                            "students or import a roster.", "school")
     counts = classes.student_counts()
     open_tasks = {}
@@ -95,7 +95,7 @@ if current is None:
             with column.container(border=True):
                 st.subheader(common.md(record["name"]), anchor=False)
                 st.caption(common.md(record["term"]) or "No term set")
-                st.caption("Join code")
+                st.caption("Class code")
                 st.code(classes.format_code(record["join_code"]), language=None)
                 st.markdown(":material/group: {} students  ·  :material/assignment: {} open".format(
                     counts.get(record["class_id"], 0), open_tasks.get(record["class_id"], 0)))
@@ -120,7 +120,7 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
         st.title(common.md(current["name"]), anchor=False)
         st.caption(common.md(current["term"]) or "No term set")
     with st.container(width="content"):
-        st.caption("Join code")
+        st.caption("Class code")
         st.code(classes.format_code(current["join_code"]), language=None)
     st.button("Rename", icon=":material/edit:", key="class_rename", on_click=common.open_dialog,
               args=("rename_class",), kwargs={"class_id": cid, "teacher": teacher})
@@ -287,13 +287,15 @@ with summary_tab:
         st.caption("The summary fills in as assignments are created and scored.")
     else:
         st.dataframe(summary.drop(columns=["assignment_id"]), hide_index=True, column_config={
-            "title": st.column_config.TextColumn("Assignment"),
-            "due_at": st.column_config.TextColumn("Due"),
-            "mean_z": st.column_config.NumberColumn("mean z", format="%.2f"),
-            "not_detected": st.column_config.NumberColumn("not detected"),
-            "needs_review": st.column_config.NumberColumn("needs review")})
-        st.caption("likely / possible / not detected / inconclusive count the detector's verdicts; "
-                   "accepted / flagged / needs review count your decisions.")
+            "title": "Assignment", "due_at": "Due", "status": "Status", "students": "Students",
+            "submitted": "Handed in", "detected": "Scored", "likely": "Likely", "possible": "Possible",
+            "not_detected": "Not detected", "inconclusive": "Inconclusive", "accepted": "Accepted",
+            "flagged": "Flagged", "needs_review": "Needs review", "returned": "Returned", "late": "Late",
+            "mean_z": st.column_config.NumberColumn("Mean z", format="%.2f"),
+            "points": "Points",
+            "mean_points": st.column_config.NumberColumn("Mean points", format="%.1f")})
+        st.caption("Likely, Possible, Not detected and Inconclusive count the detector's verdicts; "
+                   "Accepted, Flagged and Needs review count your decisions.")
 
 common.render_dialogs({"create_class": dialogs.create_class,
                        "create_assignment": dialogs.create_assignment,

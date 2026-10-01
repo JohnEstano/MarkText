@@ -33,7 +33,7 @@ def create_class(teacher):
         else:
             st.session_state["open_class_id"] = record["class_id"]
             common.go("app_pages/teacher_classes.py")
-            common.finish_dialog("Class created. Its join code is {}.".format(
+            common.finish_dialog("Class created. Its class code is {}.".format(
                 classes.format_code(record["join_code"])), ":material/school:")
 
 
@@ -140,7 +140,7 @@ def return_all(review_ids, teacher):
                              ":material/assignment_return:")
 
 
-@st.dialog("New join code?", icon=":material/key:", on_dismiss=common.close_dialog)
+@st.dialog("New class code?", icon=":material/key:", on_dismiss=common.close_dialog)
 def rotate_code(class_id, teacher):
     st.write("The current code stops working. Students already in the class stay in it.")
     with st.form("rotate_code", border=False):
@@ -153,7 +153,7 @@ def rotate_code(class_id, teacher):
         except ValueError as exc:
             st.error(common.md(str(exc)), icon=":material/error:")
         else:
-            common.finish_dialog("The new join code is {}.".format(classes.format_code(code)),
+            common.finish_dialog("The new class code is {}.".format(classes.format_code(code)),
                                  ":material/key:")
 
 

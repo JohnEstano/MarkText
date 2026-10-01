@@ -39,7 +39,7 @@ if user["role"] == "teacher":
                 return None
         files = [
             ("data/users.json", paths.users_path(), "accounts (passwords hashed)"),
-            ("data/classes.json", paths.classes_path(), "classes and join codes"),
+            ("data/classes.json", paths.classes_path(), "classes and class codes"),
             ("data/rosters.csv", paths.rosters_path(), "who is in which class"),
             ("data/assignments.csv", paths.assignments_path(), "assignments"),
             ("data/submissions.csv", paths.submissions_path(), "index of every submitted version"),

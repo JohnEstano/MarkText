@@ -86,7 +86,7 @@ def make_engine(config):
     return engine.Engine(config)
 
 
-@st.cache_resource(show_spinner="Loading the language model (the first run downloads about 1 GB)...")
+@st.cache_resource(show_spinner=False)          # engine() shows a message for the person's role
 def get_engine():
     """One engine per server process, shared by every browser tab. The lock
     serialises calls, because the model is one object used by all sessions."""
@@ -145,7 +145,13 @@ def engine():
     the model loaded (a new key, other thresholds) is adopted first, so a
     score always uses the key the pages name; a new model id or device
     loads a new engine."""
-    eng, lock = get_engine()
+    if MODEL["loaded"]:
+        eng, lock = get_engine()
+    else:
+        student = (current_user() or {}).get("role") == "student"
+        with st.spinner("Starting the writing assistant (about 20 s the first time)..." if student
+                        else "Loading the language model (the first run downloads about 1 GB)..."):
+            eng, lock = get_engine()
     config = cfg.load_config()
     if config != eng.config:
         with lock:
@@ -258,9 +264,16 @@ def check_idle(config):
 
 
 def sign_out():
-    """Forget everything this tab knew; the next run shows the sign-in page."""
+    """Forget everything this tab knew; the next run shows the sign-in page.
+    The address stays (a reload signs in again where it was), so the next
+    sign-in on this tab goes to that person's home page instead: the last
+    page of someone who signed out is not where the next person starts."""
     for key in list(st.session_state.keys()):
         del st.session_state[key]
+    st.session_state["after_sign_out"] = True
+
+
+HOME_PAGES = {"teacher": "app_pages/teacher_home.py", "student": "app_pages/student_home.py"}
 
 
 def first_name(user):
@@ -635,8 +648,9 @@ def highlighted(text, start, end, colour="orange"):
 
 def draft_changes(draft, final):
     """How much of the assistant's draft is still in the handed-in text, and
-    the text with the changes marked: words kept as they are, added words on
-    green, removed words struck through on red. Compared word by word
+    the text with the changes marked: words kept as they are, added words
+    bold on green, removed words struck through on red (a mark besides the
+    colour, so colour is not the only signal). Compared word by word
     (difflib.SequenceMatcher). Returns (share of draft words kept, markdown)."""
     import difflib
     a, b = draft.split(), final.split()
@@ -651,7 +665,7 @@ def draft_changes(draft, final):
         if tag in ("delete", "replace"):
             parts.append(":red-background[~~{}~~]".format(md(" ".join(a[i1:i2]))))
         if tag in ("insert", "replace"):
-            parts.append(":green-background[{}]".format(md(" ".join(b[j1:j2]))))
+            parts.append(":green-background[**{}**]".format(md(" ".join(b[j1:j2]))))
     return kept / len(a), " ".join(parts)
 
 

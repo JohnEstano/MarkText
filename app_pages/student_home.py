@@ -80,7 +80,8 @@ with st.container(horizontal=True):
               help="Handed in, not returned yet. Resubmissions count as new hand-ins.")
     st.metric("Returned", len(returned), delta=returned_this_week, delta_description="this week",
               border=True)
-    st.metric("Classes", len(my_classes), delta="{} open assignments".format(len(open_work)),
+    st.metric("Classes", len(my_classes), delta="{} open assignment{}".format(
+                  len(open_work), "" if len(open_work) == 1 else "s"),
               delta_color="off", delta_arrow="off", border=True)
 
 # --------------------------------------------------- returned and work

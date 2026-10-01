@@ -270,9 +270,9 @@ def test_teacher_home_with_two_scored_versions_of_one_student(new_app, school):
         detection.detect_submission(eng, lock, sub, "prof")
     at = sign_in(new_app(), "prof", "teacherpass")
     assert titles(at) == ["Hello, Prof. Reyes"]
-    assert [m.label for m in at.metric] == ["Students", "Handed in", "To decide", "Flagged or likely"]
+    assert [m.label for m in at.metric] == ["Students", "Versions handed in", "To decide", "Flagged or likely"]
     figures = {m.label: m.value for m in at.metric}
-    assert figures["Handed in"] == "2" and figures["Flagged or likely"] == "1"
+    assert figures["Versions handed in"] == "2" and figures["Flagged or likely"] == "1"
     assert len([b for b in at.button if (b.key or "").startswith("home_flag_")]) == 1
     assert at.get("vega_lite_chart")                         # the scores chart is drawn
 
@@ -415,6 +415,8 @@ def test_a_passage_that_decided_the_verdict_is_highlighted(new_app, school):
     shown = " ".join(m.value for m in at.markdown)
     assert r":orange-background[The assistant wrote this part\." in shown
     assert any("The verdict comes from this passage" in c.value for c in at.caption)
+    assert any("The highlighted passage begins" in c.value and "The assistant wrote" in c.value
+               for c in at.caption)                                 # in words, not colour alone
 
 
 def test_a_display_name_is_shown_as_text_not_markdown(new_app, school):
@@ -573,7 +575,7 @@ def test_the_teacher_sees_what_changed_in_an_assistant_draft(new_app, school):
     teacher = sign_in(new_app(), "prof", "teacherpass")
     follow(teacher, "teacher_review")
     assert any("of the assistant's draft is still in this version" in c.value for c in teacher.caption)
-    assert ":green-background[My own opening sentence.]" in " ".join(m.value for m in teacher.markdown)
+    assert ":green-background[**My own opening sentence.**]" in " ".join(m.value for m in teacher.markdown)
 
 
 def test_one_students_work_across_the_class(new_app, school):
@@ -843,6 +845,44 @@ def test_the_home_page_fits_a_phone_and_keeps_the_password_warning(new_app, scho
     follow(at, "teacher_classes")
     assert titles(at) == ["Intro to writing"]
     assert not any("easy to guess" in w.value for w in at.warning)  # not above every page
+
+
+def test_after_a_sign_out_the_next_person_starts_on_their_own_home(new_app, school):
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "about")
+    ok(at.button(key="sign_out").click().run())
+    assert any("Forgot your password" in c.value for c in at.caption)
+    at = sign_in(at, "prof", "teacherpass")
+    assert titles(at) == ["Hello, Prof. Reyes"]                     # not Alice's last page
+
+
+def test_the_account_page_shows_the_previous_sign_in_and_keeps_a_mistyped_change(new_app, people):
+    sign_in(new_app(), "alice", "studentpass")                     # an earlier sign-in
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "account")
+    profile = str(at.table[0].value)
+    assert "Previous sign-in" in profile and "None before this one" not in profile
+    at.text_input(key="account_old").input("studentpass")
+    at.text_input(key="account_new").input("brand-new-pass-7")
+    at.text_input(key="account_repeat").input("brand-new-pass-8")  # a typo
+    ok(at.button(key="account_change").click().run())
+    assert any("do not match" in e.value for e in at.error)
+    assert at.text_input(key="account_new").value == "brand-new-pass-7"     # nothing to type again
+    at.text_input(key="account_repeat").input("brand-new-pass-7")
+    ok(at.button(key="account_change").click().run())
+    assert at.text_input(key="account_new").value == ""                     # emptied once it worked
+    assert accounts.authenticate("alice", "brand-new-pass-7")
+
+
+def test_the_lab_writes_verdicts_like_the_other_pages_and_its_command_matches(new_app, people):
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "lab_detect")
+    at.text_area(key="detect_text").input(ESSAY)
+    ok(at.button(key="detect_run").click().run())
+    follow(at, "lab_history")
+    assert at.multiselect(key="hist_results").options == ["Not detected"]
+    follow(at, "lab_experiment")
+    assert any("--prompts 3 " in c.value for c in at.code)          # not all 100 prompts
 
 
 def tab_goes_field_to_field(at):

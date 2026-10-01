@@ -229,7 +229,8 @@ def authenticate(username, password):
     except store.FileProblem:
         user = public(username, record)
     audit.record(username, "sign_in", username)
-    return user
+    # the sign-in before this one, for the Account page (last_login is now this one)
+    return dict(user, previous_login=record.get("last_login", ""))
 
 
 def get_user(username):

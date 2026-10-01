@@ -50,6 +50,7 @@ if not titles:
     st.stop()
 task = assignments.get_assignment(assignment_id)
 graded = assignments.max_points(task)          # None when the assignment has no points
+thresholds = common.load_config()              # the verdict lines, as the config sets them
 
 
 # ------------------------------------------------------------ callbacks
@@ -220,7 +221,7 @@ if report and report.get("assignment_id") == assignment_id and report["skipped"]
 
 # ------------------------------------------------------------ students
 if len(frame) == 0:
-    common.empty_state("No students in this class", "Share the join code {} or import a roster on "
+    common.empty_state("No students in this class", "Share the class code {} or import a roster on "
                        "the Classes page.".format(classes.format_code(classes.get_class(class_id)["join_code"])),
                        "group_add")
     st.stop()
@@ -331,6 +332,11 @@ with st.container(border=True):
                     st.markdown(common.highlighted(text, review["passage_start"], review["passage_end"]))
                 elif text is not None:
                     st.markdown(common.plain(text))
+            if text is not None and decisive:
+                # in words too: the highlight's colour must not be the only way to find it
+                begins = " ".join(text[int(review["passage_start"]):].split()[:8])
+                st.caption(":material/format_quote: The highlighted passage begins “{}…”".format(
+                    common.md(begins)))
             drafted = (gen or {}).get("text")
             if text is not None and drafted:
                 kept, marked = common.draft_changes(drafted, text)
@@ -360,8 +366,9 @@ with st.container(border=True):
         with score_col:
             if review is None:
                 st.markdown("**Not scored yet**")
-                st.caption("Scoring checks the text for this installation's watermark. It takes a "
-                           "second or two per submission.")
+                st.caption("Scoring checks the text for this installation's watermark: a second or two "
+                           "per submission, up to half a minute for the first one after the app starts "
+                           "(the tokenizer loads).")
                 st.button("Score this submission", type="primary", icon=":material/fact_check:",
                           key="score_one", on_click=request_scoring, args=(sub["submission_id"],))
             else:
@@ -372,8 +379,12 @@ with st.container(border=True):
                     st.metric("Green share", "{}%".format(review["green_pct"]), border=True,
                               help="Chance level is 50%.")
                     st.metric("z-score", review["z_score"], border=True,
-                              help="4 or more: likely MarkText. 2 to 4: possible. Under 100 tokens "
-                                   "scored: inconclusive.")
+                              help="{:g} or more: likely MarkText. {:g} to {:g}: possible. Under {} tokens "
+                                   "scored: inconclusive.".format(
+                                       float(thresholds["detection_threshold"]),
+                                       float(thresholds["possible_threshold"]),
+                                       float(thresholds["detection_threshold"]),
+                                       thresholds["min_tokens_for_verdict"]))
                 for note in common.scoring_notes(review.get("repeated"),
                                                  review.get("passage_z") if decisive else "",
                                                  review.get("passage_p"), decisive):

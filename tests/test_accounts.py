@@ -50,7 +50,9 @@ def test_authenticate(data_dir):
     assert accounts.authenticate("nobody", "teacherpass") is None
     user = accounts.authenticate("PROF", "teacherpass")
     assert user["role"] == "teacher" and "password" not in user
-    assert accounts.get_user("prof")["last_login"] != ""
+    first = accounts.get_user("prof")["last_login"]
+    assert first != "" and user["previous_login"] == ""          # a first sign-in has none before it
+    assert accounts.authenticate("prof", "teacherpass")["previous_login"] == first
 
 
 def test_has_teacher_and_listing(data_dir):

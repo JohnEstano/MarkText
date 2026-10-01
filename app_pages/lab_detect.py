@@ -10,16 +10,16 @@ common.require_role("teacher")
 state = st.session_state
 
 st.title("Detect", anchor=False)
-st.caption("Re-score a text against this installation's key. Every analysis is logged.")
+st.caption("Score a text against this installation's key. Every score is logged.")
 col_in, col_out = st.columns([3, 2], gap="large")
 
 with col_in:
     st.file_uploader("Open a .txt file", type=["txt"], key="uploader", on_change=lab.on_upload)
     if state["upload_error"]:
         st.error(state["upload_error"], icon=":material/error:")
-    st.text_area("Text to analyze", key="detect_text", height=360)
+    st.text_area("Text to score", key="detect_text", height=360)
     with st.container(horizontal=True):
-        analyze = st.button("Analyze", type="primary", icon=":material/manage_search:",
+        analyze = st.button("Score", type="primary", icon=":material/manage_search:",
                             key="detect_run")
         st.button("Clear", on_click=lab.on_clear_detect, key="detect_clear")
 
@@ -31,7 +31,7 @@ if analyze:
     else:
         engine, lock = common.scorer()           # the tokenizer is enough; no model
         try:
-            with st.spinner("Analyzing..."):
+            with st.spinner("Scoring..."):
                 with lock:
                     stats = engine.detect(text)
         except Exception as exc:
@@ -56,7 +56,7 @@ with col_out:
         st.subheader("Result", anchor=False)
         stats = state["detect_stats"]
         if stats is None:
-            st.caption("No analysis yet.")
+            st.caption("Nothing scored yet.")
         else:
             common.verdict_badge(stats["label"])
             with st.container(horizontal=True):

@@ -22,7 +22,10 @@ state = st.session_state
 
 
 def _enter(user, message, weak=False):
+    after_sign_out = state.pop("after_sign_out", False)
     common.sign_in(user)
+    if after_sign_out:
+        common.go(common.HOME_PAGES[user["role"]])     # not the last page of whoever signed out
     if user.get("must_change"):
         state["weak_password"] = ("Your teacher set a temporary password for you. Choose your own on "
                                   "the Account page.")
@@ -81,6 +84,7 @@ with forms:
                 password = st.text_input("Password", type="password", key="login_password")
                 submitted = st.form_submit_button("Sign in", type="primary", width="stretch",
                                                   key="login_submit")
+            st.caption("Forgot your password? Your teacher can set a temporary one for you.")
             if submitted:
                 try:
                     user = accounts.authenticate(username, password)

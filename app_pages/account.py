@@ -8,6 +8,11 @@ from ui import common
 state = st.session_state
 user = common.current_user()
 record = accounts.get_user(user["username"]) or user
+PASSWORD_FIELDS = ("account_old", "account_new", "account_repeat")
+if state.pop("password_changed", False):
+    # emptied only after a change that worked: a typo must not cost all three fields
+    for key in PASSWORD_FIELDS:
+        state.pop(key, None)
 
 st.title("Account", anchor=False)
 left, right = st.columns(2, gap="large")
@@ -18,13 +23,15 @@ with left:
         st.table({":material/badge: Username": record["username"],
                   ":material/school: Role": record["role"].capitalize(),
                   ":material/event: Member since": common.when(record["created_at"]),
-                  ":material/login: Last sign-in": common.when(record["last_login"]) or "Now"},
+                  # last_login is this sign-in; the one before was kept when signing in
+                  ":material/login: Previous sign-in": common.when(user.get("previous_login")) or "None before this one"},
                  border="horizontal")
         with st.form("rename", border=False):
             name = st.text_input("Display name", value=record["display_name"], key="account_name")
             if st.form_submit_button("Save name", key="account_rename"):
                 try:
-                    state["user"] = accounts.rename(record["username"], name)
+                    state["user"] = dict(accounts.rename(record["username"], name),
+                                         previous_login=user.get("previous_login", ""))
                 except ValueError as exc:
                     st.error(common.md(str(exc)), icon=":material/error:")
                 else:
@@ -34,7 +41,7 @@ with left:
 with right:
     with st.container(border=True):
         st.subheader("Password", anchor=False)
-        with st.form("password", border=False, clear_on_submit=True):
+        with st.form("password", border=False):
             old = st.text_input("Current password", type="password", key="account_old")
             new = st.text_input("New password", type="password", key="account_new")
             st.caption(accounts.PASSWORD_HINT)
@@ -48,6 +55,7 @@ with right:
                     st.error(common.md(str(exc)), icon=":material/error:")
                 else:
                     state["weak_password"] = False
+                    state["password_changed"] = True
                     common.flash("Password changed.", ":material/lock_reset:")
                     st.rerun()
     if record["role"] == "teacher":

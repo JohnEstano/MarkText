@@ -40,12 +40,24 @@ for sub in mine:
     })
 table = pd.DataFrame(rows)
 
+def open_row():
+    """A row selected in the table opens that submission below."""
+    try:
+        rows = list(state["submissions_table"]["selection"]["rows"])
+    except (KeyError, TypeError):
+        rows = []
+    if rows and rows[0] < len(table):
+        state["open_submission_id"] = table["submission_id"].iloc[rows[0]]
+
+
 with st.container(border=True):
-    st.dataframe(table.drop(columns=["submission_id"]), hide_index=True, column_config={
+    st.dataframe(table.drop(columns=["submission_id"]), hide_index=True, key="submissions_table",
+                 on_select=open_row, selection_mode="single-row", column_config={
         "Version": st.column_config.NumberColumn(format="%d"),
         "Words": st.column_config.NumberColumn(format="%d"),
         "Latest": st.column_config.CheckboxColumn(help="The version your teacher reviews."),
     })
+    st.caption("Select a row to open that submission below.")
 
 with st.container(border=True):
     labels = {r["submission_id"]: "{} · version {} · {}".format(r["Assignment"], r["Version"], r["Handed in"])

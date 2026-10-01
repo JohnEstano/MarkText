@@ -20,7 +20,7 @@ It runs on an ordinary laptop with no GPU and no cloud service.
 
 **Teacher**
 - Home page with what needs attention across all classes and the most recent flags
-- Classes with a join code (six characters, no look-alike letters), a new code on demand, archive and restore
+- Classes with a class code (six characters, no look-alike letters), a new code on demand, archive and restore
 - Roster: students who joined with the code, a CSV roster import (registered students are enrolled; unknown usernames are invited and become members when they join with the class code, since anyone could register a name first), removal that keeps the history, and a roster export
 - Assignments with instructions, a due date and optional points; edit, close and reopen; classes can be renamed
 - Review page: every student with their state (not submitted, not scored, scored, decided, returned), late and earlier-flag markers, the submitted text and all earlier versions, scoring one or all submissions, the detector's numbers (with the strongest passage highlighted when it decided the verdict), a decision (accepted, flagged, needs review) with a note and points, returning one or all decided submissions. For a text started from the assistant's draft, how much of the draft is still in it and a word-by-word view of what the student changed
@@ -105,7 +105,7 @@ If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one
 |------|------|-------|---------|
 | `config/watermark_config.json` | JSON | `config.py` | Model, sampling and watermark parameters, thresholds, private key and key id, classroom switches (git-ignored; created on first run) |
 | `data/users.json` | JSON | `classroom/accounts.py` | Accounts: display name, role, salted password hash, last sign-in |
-| `data/classes.json` | JSON | `classroom/classes.py` | Classes: name, term, teacher, join code, archived |
+| `data/classes.json` | JSON | `classroom/classes.py` | Classes: name, term, teacher, class code, archived |
 | `data/rosters.csv` | CSV | `classroom/classes.py` | One row per student per class: active, invited or removed |
 | `data/assignments.csv` | CSV | `classroom/assignments.py` | Title, instructions, due date, open or closed |
 | `data/submissions.csv` | CSV | `classroom/submissions.py` | Index of every submitted version: version, source, SHA-256, word count, current or superseded |
@@ -132,7 +132,7 @@ What the teacher's actions do to the files:
 | Teacher action | Reads | Writes | Updates | Processes |
 |---|---|---|---|---|
 | Sign in | `users.json` | | last sign-in | verifies the password hash |
-| Create a class, new join code | `classes.json` | `classes.json` (backup) | join code | makes a unique code |
+| Create a class, new class code | `classes.json` | `classes.json` (backup) | class code | makes a unique code |
 | Import a roster | the uploaded CSV, `users.json` | `rosters.csv` (one backed-up rewrite) | invited → active when the student joins with the code | validates usernames: enrol, invite or skip |
 | Export a roster | `rosters.csv`, `users.json` | `data/reports/roster_*.csv` | | joins names to usernames |
 | Remove a student, add them back | `rosters.csv` | backup | status → removed, and back to active (or invited, if they never joined) | exactly one row must match |
@@ -256,7 +256,7 @@ Reading it: at 150 tokens the threshold of 4.0 catches 86 of 100 watermarked tex
 ## Assignment requirements mapping
 
 - **Purpose and target users**: a classroom system in which a teacher checks whether submissions were drafted with the class's watermarking assistant; users are the teacher, the students, and lecturers or researchers in the Lab. See "Purpose and users".
-- **Main features**: accounts and roles, classes with join codes and rosters, assignments, versioned submissions, scoring, decisions and returns, reports, the assistant, and the Lab (generation, detection, history, experiment).
+- **Main features**: accounts and roles, classes with class codes and rosters, assignments, versioned submissions, scoring, decisions and returns, reports, the assistant, and the Lab (generation, detection, history, experiment).
 - **Files/data**: JSON (config, accounts, classes, sidecars), CSV (rosters, assignments, submissions index, reviews, detection history, reports), TXT (submissions, generations, prompts), safetensors weights read by the library. See "Files".
 - **File handling**: the teacher's actions read, write, update and process those files through one set of rules (backup, atomic replace, fixed columns, exactly-one-match updates, never overwrite). See "File handling".
 - **ML/NLP component**: a pretrained causal language model, a sampling-time watermark, a statistical detector applied to student submissions, and an experiment that measures the detector's error rates, all via Hugging Face Transformers.
