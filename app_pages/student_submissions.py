@@ -61,6 +61,8 @@ with st.container(border=True):
             common.decision_badge(shown["decision"])
         if shown["note"]:
             st.markdown(common.plain(shown["note"]))
+        if sub["status"] == "current" and shown["decision"] in common.DECISION_FOR_STUDENT:
+            st.markdown(common.DECISION_FOR_STUDENT[shown["decision"]])
     elif sub["status"] == "current":
         st.caption("Your teacher has not returned this version yet.")
     else:

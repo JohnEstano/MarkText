@@ -76,7 +76,7 @@ def save_decision(review_id):
         reviews.decide(review_id, decision or "pending", state.get("note_" + review_id, ""), teacher,
                        points=points)
     except ValueError as exc:
-        common.flash(str(exc), ":material/error:")
+        common.fail("decision", str(exc))
     else:
         state["review_drafts"].pop(review_id, None)
         common.flash("Decision saved: {}.".format(common.decision_text(decision)), ":material/task_alt:")
@@ -91,13 +91,13 @@ def export_report():
 def import_files():
     uploaded = state.get("teacher_files_" + assignment_id) or []
     if not uploaded:
-        common.flash("Choose one or more .txt files first.", ":material/error:")
+        common.fail("teacher_files", "Choose one or more .txt files first.")
         return
     try:
         result = submissions.import_files(assignment_id, [(f.name, f.getvalue()) for f in uploaded],
                                           by=teacher)
     except ValueError as exc:
-        common.flash(str(exc), ":material/error:")
+        common.fail("teacher_files", str(exc))
         return
     state["files_report"] = {"assignment_id": assignment_id, **result}
     common.flash("{} handed in, {} skipped.".format(len(result["handed_in"]), len(result["skipped"])),
@@ -210,6 +210,7 @@ with st.container(horizontal=True, vertical_alignment="center"):
                        file_name="assignment_{}.csv".format(assignment_id), mime="text/csv",
                        on_click=export_report, key="export_report",
                        help="Saves the table under data/reports/ and downloads a copy.")
+common.error_here("teacher_files")
 
 report = state.get("files_report")
 if report and report.get("assignment_id") == assignment_id and report["skipped"]:
@@ -279,12 +280,29 @@ with st.container(border=True):
 
 labels = dict(zip(frame["username"], frame["display_name"]))
 states = dict(zip(frame["username"], frame["state"]))
+
+
+def next_waiting(after):
+    """The next student in table order, after `after` and round to the
+    start, who still waits for a score or a decision; None when nobody does."""
+    order = usernames[usernames.index(after) + 1:] + usernames[:usernames.index(after)]
+    return next((u for u in order if states[u] in ("awaiting decision", "awaiting detection")), None)
+
+
+def go_to(username):
+    state["review_pick"] = username
+
+
 with st.container(border=True):
     with st.container(horizontal=True, vertical_alignment="bottom"):
         username = common.choose("Student", usernames, "review_pick", labels.get, detail=str)
         common.state_badge(states[username])
         if bool(frame.loc[frame["username"] == username, "earlier_flag"].iloc[0]):
             st.badge("Earlier version flagged", color="red", icon=":material/history:")
+        following = next_waiting(username)
+        st.button("Next waiting", icon=":material/skip_next:", key="next_waiting", on_click=go_to,
+                  args=(following,), disabled=following is None,
+                  help="The next student still waiting for a score or a decision.")
     sub = submissions.current_submission(assignment_id, username)
     if sub is None:
         st.caption("{} has not handed anything in yet.".format(common.md(labels[username])))
@@ -398,7 +416,8 @@ with st.container(border=True):
                                      on_change=keep_draft, args=(rid,))
                 st.text_area("Note to the student", value=draft["note"] if draft else review["note"],
                              key="note_" + rid, height=100, on_change=keep_draft, args=(rid,),
-                             placeholder="Explain your decision in a sentence or two.")
+                             placeholder="Explain your decision in a sentence or two. Needed for "
+                                         "Flagged and Needs review.")
                 saved_points = float(review["points"]) if review.get("points") else None
                 if graded:
                     st.number_input("Points (out of {})".format(graded), min_value=0.0, max_value=float(graded),
@@ -430,5 +449,6 @@ with st.container(border=True):
                                   kwargs={"review_id": rid, "teacher": teacher})
                     else:
                         st.caption("Choose a decision, then return the work.")
+                common.error_here("decision")
 
 common.render_dialogs({"return_work": dialogs.return_work, "return_all": dialogs.return_all})

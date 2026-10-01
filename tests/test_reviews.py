@@ -41,7 +41,7 @@ def test_decide_and_return(course):
     with pytest.raises(ValueError, match="Choose"):
         reviews.decide(rev["review_id"], "pending", decided_by="prof")
     with pytest.raises(ValueError, match="teacher"):
-        reviews.decide(rev["review_id"], "flagged", decided_by="alice")
+        reviews.decide(rev["review_id"], "flagged", "Drafted?", decided_by="alice")
     assert reviews.decide(rev["review_id"], "flagged", "Drafted with the assistant?", "prof").exists()
     reviews.return_to_student(rev["review_id"], by="prof")
     after = reviews.get_review(rev["review_id"])
@@ -92,9 +92,17 @@ def test_a_row_returned_before_the_snapshot_columns_shows_its_decision(course):
     assert not reviews.changed_since_return(old)
 
 
+def test_flagged_and_needs_review_need_a_note(course):
+    _, rev = _review(course)
+    for decision in ("flagged", "needs_review"):
+        with pytest.raises(ValueError, match="Add a note"):
+            reviews.decide(rev["review_id"], decision, "  ", "prof")
+    assert reviews.decide(rev["review_id"], "accepted", "", "prof").exists()     # accepting needs none
+
+
 def test_nothing_is_shown_before_a_return(course):
     _, rev = _review(course)
-    reviews.decide(rev["review_id"], "flagged", "", "prof")
+    reviews.decide(rev["review_id"], "flagged", "Drafted?", "prof")
     assert reviews.shown_to_student(reviews.get_review(rev["review_id"])) is None
     assert reviews.shown_to_student(None) is None
 

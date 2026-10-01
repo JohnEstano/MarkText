@@ -49,7 +49,7 @@ def create_assignment(class_id, teacher):
                                 key="new_task_due")
             points = st.number_input("Points (optional)", min_value=1, max_value=assignments.MAX_POINTS,
                                      value=None, step=1, key="new_task_points",
-                                     help="Leave empty for work that is not graded.")
+                                     placeholder="Empty if not graded")
         cancel, create = _buttons("new_task_cancel", "Create assignment", "new_task_create")
     if cancel:
         common.finish_dialog()
@@ -75,7 +75,8 @@ def edit_assignment(assignment_id, teacher):
             due = st.date_input("Due date (optional)", value=store.parse_date(task["due_at"]),
                                 key="edit_task_due")
             points = st.number_input("Points (optional)", min_value=1, max_value=assignments.MAX_POINTS,
-                                     value=assignments.max_points(task), step=1, key="edit_task_points")
+                                     value=assignments.max_points(task), step=1, key="edit_task_points",
+                                     placeholder="Empty if not graded")
         cancel, save = _buttons("edit_task_cancel", "Save", "edit_task_save")
     if cancel:
         common.finish_dialog()
@@ -177,7 +178,8 @@ def archive_class(class_id, teacher):
 @st.dialog("Remove this student?", icon=":material/person_remove:", on_dismiss=common.close_dialog)
 def remove_student(class_id, username, teacher):
     st.write("**{}** leaves the class. Their submissions and your reviews stay on file, and the "
-             "roster keeps a row marked removed.".format(common.md(common.display_name(username))))
+             "roster keeps a row marked removed. You can add them back from the Removed list on "
+             "the roster.".format(common.md(common.display_name(username))))
     with st.form("remove_student", border=False):
         cancel, confirm = _buttons("remove_cancel", "Remove student", "remove_confirm")
     if cancel:

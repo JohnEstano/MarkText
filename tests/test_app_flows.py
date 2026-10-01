@@ -373,7 +373,7 @@ def test_saving_a_decision_while_the_file_is_open_in_excel(new_app, school, exce
     excel_lock(paths.reviews_path())
     at.segmented_control(key="decision_" + rid).set_value("accepted")
     ok(at.button(key="save_" + rid).click().run())
-    assert any("Excel" in t.value for t in at.toast)
+    assert any("Excel" in e.value for e in at.error)                # beside Save, not a passing toast
     assert reviews.get_review(rid)["decision"] == "pending"
 
 
@@ -775,6 +775,74 @@ def test_students_get_an_about_page_of_their_own_and_lengths_in_words(new_app, s
     teacher = sign_in(new_app(), "prof", "teacherpass")
     follow(teacher, "about")
     assert any("Installation" in m.value for m in teacher.markdown)    # the README, for teachers
+
+
+def test_errors_stay_beside_the_control_they_are_about(new_app, school):
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.button(key="hand_in").click().run())                      # nothing written yet
+    assert any("The submission is empty" in e.value for e in at.error)
+    assert not at.toast
+    follow(at, "student_home")
+    assert not at.text_input(key="join_code").help                  # no tooltip Tab stop
+    at.text_input(key="join_code").input("ZZZ-999")
+    ok(at.button(key="join_submit").click().run())
+    assert any("No class uses the code" in e.value for e in at.error)
+
+
+def test_a_flag_or_a_revision_needs_a_note_and_the_student_is_told_what_to_do(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    rid = reviews.latest_review(sub["submission_id"])["review_id"]
+    at.segmented_control(key="decision_" + rid).set_value("needs_review")
+    ok(at.button(key="save_" + rid).click().run())
+    assert any("Add a note" in e.value for e in at.error)
+    assert reviews.get_review(rid)["decision"] == "pending"
+    at.text_area(key="note_" + rid).input("Add one example from your own life.")
+    ok(at.button(key="save_" + rid).click().run())
+    ok(at.button(key="return_" + rid).click().run())
+    ok(at.button(key="return_confirm").click().run())
+    student = sign_in(new_app(), "alice", "studentpass")
+    follow(student, "student_assignment")
+    assert any("would like you to revise this" in m.value for m in student.markdown)
+
+
+def test_next_waiting_student_and_adding_a_removed_student_back(new_app, school):
+    aid, cid = school["assignment"]["assignment_id"], school["class"]["class_id"]
+    classes.join_class(school["class"]["join_code"], "ben")
+    for who in ("alice", "ben"):
+        submissions.submit(aid, who, ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    assert at.session_state["review_pick"] == "alice"
+    ok(at.button(key="next_waiting").click().run())
+    assert at.session_state["review_pick"] == "ben"
+    ok(at.button(key="next_waiting").click().run())                 # round to the start
+    assert at.session_state["review_pick"] == "alice"
+    classes.remove_student(cid, "ben", by="prof")
+    at.session_state["open_class_id"] = cid
+    follow(at, "teacher_classes")
+    assert at.selectbox(key="remove_pick_" + cid).label == "Student"
+    ok(at.button(key="add_back_{}_ben".format(cid)).click().run())
+    assert classes.is_member(cid, "ben")
+
+
+def test_the_home_page_fits_a_phone_and_keeps_the_password_warning(new_app, school):
+    cid = school["class"]["class_id"]
+    at = sign_in(new_app(), "prof", "teacherpass")
+    at.session_state["weak_password"] = "Your password is easy to guess."
+    ok(at.run())
+    assert any("easy to guess" in w.value for w in at.warning)      # on Home, below the title
+    assert not at.dataframe                                         # the classes are a list
+    ok(at.button(key="home_class_" + cid).click().run())
+    assert at.session_state["open_class_id"] == cid
+    follow(at, "teacher_classes")
+    assert titles(at) == ["Intro to writing"]
+    assert not any("easy to guess" in w.value for w in at.warning)  # not above every page
 
 
 def tab_goes_field_to_field(at):

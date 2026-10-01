@@ -62,7 +62,7 @@ def on_update_record():
                                        filename=state.get("manage_filename", ""))
         common.flash("Record {} updated. Backup: {}".format(rid, backup.name))
     except (ValueError, OSError) as exc:
-        common.flash("Record not updated: {}".format(exc), ":material/error:")
+        common.fail("manage_record", "Record not updated: {}".format(exc))
 
 
 st.title("History", anchor=False)
@@ -188,6 +188,7 @@ with st.expander("Manage one record by its run id", icon=":material/edit:"):
             st.button("Save changes", on_click=on_update_record, key="manage_save")
             st.button("Delete record", icon=":material/delete:", key="manage_delete",
                       on_click=common.open_dialog, args=("delete_record",), kwargs={"run_id": rid})
+    common.error_here("manage_record")
 
 with st.container(horizontal=True, vertical_alignment="center"):
     st.caption("{:,} analyses in {}. Writes go through history.py (csv module); this page reads "

@@ -241,6 +241,28 @@ def remove_student(class_id, username, by=None):
     return saved
 
 
+def add_back(class_id, username, by=None):
+    """Undo a removal: the row becomes active again, or invited when the
+    student never joined (an imported name not yet claimed with the code).
+    The class code refuses a removed student, so this is the way back.
+    Returns the backup path."""
+    record = get_class(class_id)
+    if record is None:
+        raise ValueError("There is no class {}.".format(class_id))
+    if by is not None and record["teacher"] != by:
+        raise ValueError("Only the class's teacher can change the roster.")
+    username = accounts.normalise_username(username)
+
+    def match(r):
+        return _is(class_id, username)(r) and r["status"] == "removed"
+    saved = store.update_where(paths.rosters_path(), ROSTER_COLUMNS, match,
+                               lambda r: dict(r, status="active" if r["joined_at"] else "invited",
+                                              removed_at=""),
+                               "{} in {}".format(username, class_id))
+    audit.record(by, "student_added_back", class_id, username)
+    return saved
+
+
 def reset_student_password(class_id, username, by):
     """A temporary password for a student of the teacher's class, returned
     once for the teacher to hand over; the student must replace it at the

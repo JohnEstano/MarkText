@@ -135,11 +135,11 @@ What the teacher's actions do to the files:
 | Create a class, new join code | `classes.json` | `classes.json` (backup) | join code | makes a unique code |
 | Import a roster | the uploaded CSV, `users.json` | `rosters.csv` (one backed-up rewrite) | invited → active when the student joins with the code | validates usernames: enrol, invite or skip |
 | Export a roster | `rosters.csv`, `users.json` | `data/reports/roster_*.csv` | | joins names to usernames |
-| Remove a student | `rosters.csv` | backup | status → removed | exactly one row must match |
+| Remove a student, add them back | `rosters.csv` | backup | status → removed, and back to active (or invited, if they never joined) | exactly one row must match |
 | Create, close, reopen an assignment | `assignments.csv` | a row | status | |
 | Open a submission | `vNNN.txt`, its sidecar, `reviews.csv` | | | |
 | Score one or all submissions, or score old scores again | the texts | a history row and a review row each (a new score carries the decision over) | | tokenises and runs the z-test |
-| Decide, return | `reviews.csv` | backup | decision, note, returned (a copy of the decision and note the student sees) | a decision changed after returning waits for the next return |
+| Decide, return | `reviews.csv` | backup | decision, note, returned (a copy of the decision and note the student sees) | Flagged and Needs review need a note; a decision changed after returning waits for the next return |
 | Export a report | roster, submissions, reviews | `data/reports/assignment_*.csv`, `class_*_summary_*.csv` | | pandas left joins, one state per student |
 | Hand in students' files | the uploaded `.txt` files | `vNNN.txt` + `.json` and an index row per file | the older version → superseded | the file name picks the student; not UTF-8, unknown or duplicate names are skipped with a reason |
 | Export a class | every file of the class | `data/reports/class_*.zip` (temp name, then renamed) | | zipfile, DEFLATE |

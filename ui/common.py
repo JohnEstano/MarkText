@@ -31,6 +31,7 @@ DEFAULTS = {
     "user": None,               # public account record once signed in
     "dialog": None,             # {"name": ..., **context} while a dialog is open
     "flash": [],                # (message, icon) toasts to show on the next run
+    "errors": {},               # control -> error, shown beside it on the next run (fail/error_here)
     "goto": None,               # page to switch to on the next run
     "page_seen": None,          # url path of the page shown last run
     "config_notes": [],         # what the config loader reported this session
@@ -422,8 +423,24 @@ def finish_dialog(message=None, icon=":material/check_circle:"):
 
 
 # ------------------------------------------------------------------ flash
+ERROR_ICON = ":material/error:"
+
+
 def flash(message, icon=":material/check_circle:"):
     st.session_state.setdefault("flash", []).append((message, icon))
+
+
+def fail(where, message):
+    """Keep an error for the control `where`; error_here(where), drawn
+    beside that control, shows it on the next run. Unlike a toast it stays
+    until the next click, where the person is looking."""
+    st.session_state.setdefault("errors", {})[where] = message
+
+
+def error_here(where):
+    message = st.session_state.get("errors", {}).pop(where, None)
+    if message:
+        st.error(md(message), icon=ERROR_ICON)
 
 
 def safely(action):
@@ -451,9 +468,25 @@ def problem(exc):
 
 
 def show_flash():
+    """Confirmations as toasts; an error as a red box at the top of the page,
+    which stays until the next click (a toast would vanish in seconds).
+    Errors of the main actions go beside their control instead (fail)."""
     for message, icon in st.session_state.get("flash", []):
-        st.toast(md(message), icon=icon)       # messages quote names, titles and codes
+        if icon == ERROR_ICON:
+            st.error(md(message), icon=icon)
+        else:
+            st.toast(md(message), icon=icon)   # messages quote names, titles and codes
     st.session_state["flash"] = []
+
+
+def password_warning():
+    """On the home pages, below the title: the password is easy to guess or
+    was set by the teacher (state["weak_password"], set at sign-in)."""
+    message = st.session_state.get("weak_password")
+    if message:
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.warning(message, icon=":material/lock_reset:")
+            st.page_link("app_pages/account.py", label="Change it", icon=":material/arrow_forward:")
 
 
 # ------------------------------------------------------------------ badges
@@ -468,6 +501,14 @@ DECISION_BADGE = {
     "accepted": ("Accepted", "green", ":material/check_circle:"),
     "flagged": ("Flagged", "red", ":material/flag:"),
     "needs_review": ("Needs review", "orange", ":material/rate_review:"),
+}
+# what a returned decision asks of the student, shown with it on the student's pages
+DECISION_FOR_STUDENT = {
+    "accepted": "Your teacher accepted this version.",
+    "flagged": "Your teacher flagged this version. Read the note; your teacher may want to talk "
+               "to you about it.",
+    "needs_review": "Your teacher would like you to revise this. Read the note, then hand in a new "
+                    "version.",
 }
 STATE_BADGE = {
     "not submitted": ("Not submitted", "gray", ":material/radio_button_unchecked:"),
@@ -697,6 +738,8 @@ def sidebar_footer(user):
         with st.container(border=True):
             st.markdown("**{}**".format(md(user["display_name"])))
             st.caption("{} · {}".format(md(user["username"]), user["role"].capitalize()))
+            if st.session_state.get("weak_password"):
+                st.page_link("app_pages/account.py", label="Change your password", icon=":material/lock_reset:")
             st.button("Sign out", icon=":material/logout:", key="sign_out", on_click=sign_out,
                       type="tertiary")
         if MODEL["loaded"]:

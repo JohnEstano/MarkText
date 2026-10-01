@@ -36,16 +36,25 @@ def restore(class_id):
 def import_roster(class_id):
     uploaded = state.get("roster_upload_" + class_id)
     if uploaded is None:
-        common.flash("Choose a CSV file first.", ":material/error:")
+        common.fail("roster", "Choose a CSV file first.")
         return
     try:
         result = classes.import_roster(class_id, classes.parse_roster_csv(uploaded.getvalue()), by=teacher)
     except ValueError as exc:
-        common.flash(str(exc), ":material/error:")
+        common.fail("roster", str(exc))
         return
     state["import_report"] = {"class_id": class_id, "file": uploaded.name, **result}
     common.flash("{} enrolled, {} invited, {} skipped.".format(
         len(result["enrolled"]), len(result["invited"]), len(result["skipped"])), ":material/group_add:")
+
+
+def add_back(class_id, username):
+    try:
+        classes.add_back(class_id, username, by=teacher)
+    except ValueError as exc:
+        common.fail("roster", str(exc))
+    else:
+        common.flash("{} is back in the class.".format(common.display_name(username)), ":material/person_add:")
 
 
 @common.safely
@@ -146,6 +155,7 @@ with roster_tab:
                            data=store.csv_text(classes.EXPORT_COLUMNS, rows).encode("utf-8"),
                            file_name="roster_{}.csv".format(cid), mime="text/csv",
                            on_click=export_roster, args=(cid,), key="roster_export_" + cid)
+    common.error_here("roster")
     report = state.get("import_report")
     if report and report.get("class_id") == cid and report["skipped"]:
         with st.expander("Skipped in {} ({})".format(common.md(report["file"]), len(report["skipped"])),
@@ -166,7 +176,7 @@ with roster_tab:
                                                      "code; import: added from a roster file"),
             "joined_at": st.column_config.TextColumn("Joined")})
         with st.container(horizontal=True, vertical_alignment="bottom"):
-            leaving = st.selectbox("Remove a student", [r["username"] for r in present], index=None,
+            leaving = st.selectbox("Student", [r["username"] for r in present], index=None,
                                    placeholder="Choose a student",
                                    format_func=lambda u: "{} ({})".format(common.display_name(u), u),
                                    key="remove_pick_" + cid)
@@ -210,8 +220,13 @@ with roster_tab:
                         st.caption("Nothing handed in yet.")
     if removed:
         with st.expander("Removed ({})".format(len(removed)), icon=":material/person_off:"):
-            st.dataframe(pd.DataFrame(removed)[["display_name", "username", "removed_at"]],
-                         hide_index=True)
+            for row in removed:
+                with st.container(horizontal=True, vertical_alignment="center"):
+                    st.markdown("**{}** ({}) · removed {}".format(common.md(row["display_name"]),
+                                                                  common.md(row["username"]),
+                                                                  common.when(row["removed_at"])))
+                    st.button("Add back", icon=":material/person_add:", key="add_back_{}_{}".format(cid, row["username"]),
+                              on_click=add_back, args=(cid, row["username"]), type="tertiary")
 
 with tasks_tab:
     with st.container(horizontal=True, vertical_alignment="center"):

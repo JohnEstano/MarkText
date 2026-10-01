@@ -34,6 +34,7 @@ ACTIONS = {
     "joined_class": "Joined a class",
     "roster_imported": "Imported a roster",
     "student_removed": "Removed a student",
+    "student_added_back": "Added a student back",
     "assignment_created": "Created an assignment",
     "assignment_changed": "Changed an assignment",
     "handed_in": "Handed in",

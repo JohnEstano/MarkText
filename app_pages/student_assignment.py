@@ -125,8 +125,7 @@ def on_upload():
     try:
         text = uploaded.getvalue().decode("utf-8-sig")
     except UnicodeDecodeError:
-        common.flash("{} is not a UTF-8 text file. Save it as UTF-8 and try again.".format(uploaded.name),
-                     ":material/error:")
+        common.fail("upload", "{} is not a UTF-8 text file. Save it as UTF-8 and try again.".format(uploaded.name))
         return
     offer(text, "upload", common.md(uploaded.name), upload_name=uploaded.name)
 
@@ -187,7 +186,7 @@ def hand_in():
             version_note=state.get("version_note_" + assignment_id, ""),
             generation=state.get("assistant_record_" + assignment_id) if source == "assistant" else None)
     except ValueError as exc:
-        common.flash(str(exc), ":material/error:")
+        common.fail("hand_in", str(exc))
         return
     common.flash("Version {} handed in.".format(row["version"]), ":material/assignment_turned_in:")
     set_text("", "editor")
@@ -230,6 +229,8 @@ if shown:
                 current["version"]))
         if shown["note"]:
             st.markdown(common.plain(shown["note"]))
+        if returned and shown["decision"] in common.DECISION_FOR_STUDENT:    # what it asks of you
+            st.markdown(common.DECISION_FOR_STUDENT[shown["decision"]])
 
 if current:
     with st.expander("What you handed in: version {}, {}{}".format(
@@ -260,8 +261,10 @@ with write_col:
                                     key="write_mode_" + assignment_id, label_visibility="collapsed",
                                     required=True)
         if mode == "Upload a .txt file":
-            st.file_uploader("Text file", type=["txt"], key="upload_" + assignment_id, on_change=on_upload,
-                             help="Plain text, UTF-8. The text opens in the editor so you can check it.")
+            st.file_uploader("Text file", type=["txt"], key="upload_" + assignment_id, on_change=on_upload)
+            st.caption("A plain .txt file. Its text opens in the editor, so you can check it before "
+                       "handing it in.")
+            common.error_here("upload")
         st.text_area("Answer", key=editor_key, height=320, label_visibility="collapsed",
                      placeholder="Write your answer here.", on_change=sync_editor)
         words = len(state.get(editor_key, "").split())
@@ -278,6 +281,7 @@ with write_col:
                       placeholder="What changed in this version?", max_chars=submissions.MAX_NOTE)
         st.button("Hand in version {}".format(next_version), type="primary",
                   icon=":material/assignment_turned_in:", on_click=hand_in, key="hand_in")
+        common.error_here("hand_in")
 
 with help_col:
     # ---- the assistant: the whole block goes away when the switch is off

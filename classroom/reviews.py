@@ -26,6 +26,8 @@ COLUMNS = ["review_id", "submission_id", "assignment_id", "class_id", "username"
            "repeated", "passage_z", "passage_p", "passage_start", "passage_end", "points",
            "returned_points"]
 DECISIONS = ("pending", "accepted", "flagged", "needs_review")
+# a student told "flagged" or "needs review" must learn why, or what to revise
+NOTE_NEEDED = ("flagged", "needs_review")
 DECISION_LABELS = {"pending": "Pending", "accepted": "Accepted", "flagged": "Flagged",
                    "needs_review": "Needs review"}
 EDITABLE = ("decision", "note", "returned", "returned_at", "decided_by", "decided_at",
@@ -173,6 +175,9 @@ def decide(review_id, decision, note="", decided_by="", points=None):
     if decision not in DECISIONS or decision == "pending":
         raise ValueError("Choose accepted, flagged or needs review.")
     note = (note or "").strip()
+    if decision in NOTE_NEEDED and not note:
+        raise ValueError("Add a note: the student needs to know {}.".format(
+            "why it was flagged" if decision == "flagged" else "what to revise"))
     if len(note) > MAX_NOTE:
         raise ValueError("Notes are limited to {} characters.".format(MAX_NOTE))
     fields = {"decision": decision, "note": note, "decided_by": decided_by, "decided_at": store.now()}

@@ -40,9 +40,8 @@ nav = st.navigation(common.pages_for(user), position="sidebar" if user else "hid
 common.follow_goto()
 common.on_page_change(nav)
 if user:
+    # a weak or temporary password: a warning on the home pages and a link in this card
     common.sidebar_footer(user)
-    if st.session_state.get("weak_password"):
-        st.warning(st.session_state["weak_password"], icon=":material/lock_reset:")
 common.show_flash()
 try:
     nav.run()

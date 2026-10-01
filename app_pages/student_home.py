@@ -20,17 +20,18 @@ def join():
     try:
         record = classes.join_class(code, user["username"])
     except ValueError as exc:
-        common.flash(str(exc), ":material/error:")
+        common.fail("join", str(exc))
     else:
         common.flash("You joined {}.".format(record["name"]), ":material/school:")
         state["join_code"] = ""
 
 
 def join_form():
-    st.text_input("Class code", placeholder="ABC-234", key="join_code",
-                  help="Your teacher shares a six-character code.")
-    st.button("Join class", type="primary", icon=":material/group_add:", on_click=join,
-              key="join_submit", width="stretch")
+    # a form, so pressing Enter in the box joins
+    with st.form("join", border=False):
+        st.text_input("Class code", placeholder="ABC-234 (from your teacher)", key="join_code")
+        st.form_submit_button("Join class", type="primary", icon=":material/group_add:", on_click=join,
+                              key="join_submit", width="stretch")
 
 
 my_classes = classes.classes_for_student(user["username"])
@@ -46,6 +47,8 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
     if my_classes:
         with st.popover("Join a class", icon=":material/group_add:"):
             join_form()
+common.password_warning()
+common.error_here("join")         # under the header: the popover may have closed
 
 if not my_classes:
     common.empty_state("You are not in a class yet",

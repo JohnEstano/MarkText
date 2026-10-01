@@ -7,7 +7,6 @@ that pair a narrow list with a wide chart or table, at equal heights.
 
 import datetime
 
-import pandas as pd
 import streamlit as st
 
 from classroom import accounts, reports, seed_demo
@@ -47,9 +46,9 @@ def demo_dialog():
              "scores them. Takes about a minute.")
     with st.form("demo", border=False):
         password = st.text_input("Password for the demo students", key="demo_password",
-                                 value=state.setdefault("_demo_suggestion", seed_demo.new_password()),
-                                 help="Shown here so you can write it down; you sign in as a demo "
-                                      "student with it. Not stored anywhere in plain text.")
+                                 value=state.setdefault("_demo_suggestion", seed_demo.new_password()))
+        st.caption("Shown so you can write it down: you sign in as a demo student with it. It is not "
+                   "stored anywhere in plain text.")
         with st.container(horizontal=True, horizontal_alignment="right"):
             cancel = st.form_submit_button("Cancel", key="demo_cancel")
             build = st.form_submit_button("Build the demo class", type="primary", key="demo_build")
@@ -66,6 +65,11 @@ def demo_dialog():
             common.finish_dialog()
 
 
+def open_class(class_id):
+    state["open_class_id"] = class_id
+    common.go("app_pages/teacher_classes.py")
+
+
 overview = reports.teacher_overview(user["username"])
 today = datetime.date.today()
 
@@ -77,6 +81,7 @@ with st.container(horizontal=True, vertical_alignment="bottom"):
     if overview["classes"]:
         st.button("New class", type="primary", icon=":material/add:", on_click=common.open_dialog,
                   args=("create_class",), kwargs={"teacher": user["username"]}, key="home_add_class")
+common.password_warning()
 
 if state.get("config_notes"):
     with st.container(border=True):
@@ -196,15 +201,19 @@ with right.container(border=True, height="stretch"):
         st.subheader("Your classes", icon=":material/school:", anchor=False)
         st.page_link("app_pages/teacher_classes.py", label="Manage classes",
                      icon=":material/arrow_forward:")
-    table = pd.DataFrame(overview["class_rows"])[["name", "term", "students", "open", "to_decide",
-                                                  "not_scored", "join_code"]]
-    st.dataframe(table, hide_index=True, column_config={
-        "name": st.column_config.TextColumn("Class"),
-        "term": st.column_config.TextColumn("Term"),
-        "students": st.column_config.NumberColumn("Students", format="%d"),
-        "open": st.column_config.NumberColumn("Open", format="%d", help="Open assignments"),
-        "to_decide": st.column_config.NumberColumn("To decide", format="%d"),
-        "not_scored": st.column_config.NumberColumn("Not scored", format="%d"),
-        "join_code": st.column_config.TextColumn("Join code")})
+    # a list, not a table: it fits a phone and each class opens with one click
+    for row in overview["class_rows"]:
+        with st.container(border=True, horizontal=True, vertical_alignment="center"):
+            with st.container():
+                st.markdown("**{}**{}".format(common.md(row["name"]),
+                                              " · " + common.md(row["term"]) if row["term"] else ""))
+                facts = ["{} student{}".format(row["students"], "" if row["students"] == 1 else "s"),
+                         "{} open".format(row["open"]), "join code {}".format(row["join_code"])]
+                if row["to_decide"]:
+                    facts.insert(2, "{} to decide".format(row["to_decide"]))
+                if row["not_scored"]:
+                    facts.insert(2, "{} not scored".format(row["not_scored"]))
+                st.caption(" · ".join(facts))
+            st.button("Open", key="home_class_" + row["class_id"], on_click=open_class, args=(row["class_id"],))
 
 common.render_dialogs({"create_class": dialogs.create_class})
