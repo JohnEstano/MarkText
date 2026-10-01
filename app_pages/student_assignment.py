@@ -10,7 +10,7 @@ teacher's side.
 
 import streamlit as st
 
-from classroom import assignments, assistant, classes, drafts, reviews, submissions
+from classroom import assignments, assistant, classes, drafts, reports, submissions
 from ui import common
 
 user = common.require_role("student")
@@ -34,9 +34,10 @@ assignment_id = common.choose("Assignment", list(titles), "open_assignment_id", 
                               detail=where.get, label_visibility="collapsed")
 task = assignments.get_assignment(assignment_id)
 current = submissions.current_submission(assignment_id, user["username"])
-# only what the teacher returned, as it was returned; never the detector's numbers
-shown = reviews.shown_to_student(reviews.latest_review(current["submission_id"])) if current else None
-returned = shown is not None
+# only what the teacher returned, as it was returned; never the detector's numbers. The
+# newest returned feedback stays in view after a new version is handed in, to revise with
+shown = reports.returned_feedback(assignment_id, user["username"]) if current else None
+returned = shown is not None and shown["version"] == int(current["version"])     # this version
 # The editor's text lives in a plain key (draft_<id>) as well as in the widget
 # (editor_<id>): Streamlit drops a widget's value when its page is not shown,
 # and a half-written essay must survive a visit to another page.
@@ -87,30 +88,34 @@ def sync_editor():
 
 
 # ------------------------------------------------------------ callbacks
-def take(text, source, upload_name="", record=None, below=False):
-    """Put a file or an assistant draft into the editor, in place of the
-    text there or (below=True) after it."""
+def take(text, source, upload_name="", record=None, below=False, from_card=False):
+    """Put a text into the editor (a file, an assistant draft, an earlier
+    version), in place of the text there or (below=True) after it."""
     if below:
         text = state.get(editor_key, "").rstrip() + "\n\n" + text
     if upload_name:
         state["upload_name_" + assignment_id] = upload_name
+    elif source != "upload":
+        state.pop("upload_name_" + assignment_id, None)
     if record is not None:
         state["assistant_record_" + assignment_id] = record
+    if from_card:                            # the assistant's draft card has been used
         state["assistant_draft"] = None
     set_text(text, source)
     state["write_mode_" + assignment_id] = "Write here"
     keep_copy()
 
 
-def offer(text, source, upload_name="", record=None):
+def offer(text, source, what, upload_name="", record=None, from_card=False):
     """take(), after asking first when the editor already holds other text:
-    one click must never overwrite what the student wrote."""
+    one click must never overwrite what the student wrote. `what` names the
+    incoming text in the question ("the assistant's draft", "version 2")."""
     mine = state.get(editor_key, "").strip()
     if mine and mine != text.strip():
-        common.open_dialog("replace_text", text=text, source=source, upload_name=upload_name,
-                           record=record)
+        common.open_dialog("replace_text", text=text, source=source, what=what, upload_name=upload_name,
+                           record=record, from_card=from_card)
     else:
-        take(text, source, upload_name, record)
+        take(text, source, upload_name, record, from_card=from_card)
 
 
 def on_upload():
@@ -123,29 +128,42 @@ def on_upload():
         common.flash("{} is not a UTF-8 text file. Save it as UTF-8 and try again.".format(uploaded.name),
                      ":material/error:")
         return
-    offer(text, "upload", upload_name=uploaded.name)
+    offer(text, "upload", common.md(uploaded.name), upload_name=uploaded.name)
 
 
 def use_draft():
     draft = state.get("assistant_draft") or {}
     if draft.get("assignment_id") == assignment_id:
-        offer(draft["text"], "assistant", record=draft["record"])
+        offer(draft["text"], "assistant", "the assistant's draft", record=draft["record"], from_card=True)
+
+
+def start_from(submission_id):
+    """Put a handed-in version back in the editor, to revise it instead of
+    typing it again. A version drafted with the assistant keeps its record,
+    so the teacher still sees what came from the draft."""
+    sub = submissions.get_submission(submission_id)
+    try:
+        text = submissions.read_text(sub)
+    except ValueError as exc:
+        common.flash(str(exc), ":material/error:")
+        return
+    record = (submissions.sidecar(sub) or {}).get("generation") if sub["source"] == "assistant" else None
+    offer(text, "assistant" if record else "editor", "version {}".format(sub["version"]), record=record)
 
 
 @st.dialog("Replace your text?", icon=":material/swap_horiz:", on_dismiss=common.close_dialog)
-def replace_text(text, source, upload_name="", record=None):
+def replace_text(text, source, what, upload_name="", record=None, from_card=False):
     # the buttons change the editor in their callbacks: a dialog's body runs
     # after the text box is drawn, when Streamlit no longer lets its value change
-    what = "the assistant's draft" if source == "assistant" else common.md(upload_name) or "the file"
     st.write("Your answer has {} words. Replace them with {} ({} words), or add it below your "
              "text?".format(len(state.get(editor_key, "").split()), what, len(text.split())))
     with st.form("replace_text", border=False):
         with st.container(horizontal=True, horizontal_alignment="right"):
             cancel = st.form_submit_button("Cancel", key="replace_cancel")
             below = st.form_submit_button("Add below", key="replace_below", on_click=take,
-                                          args=(text, source, upload_name, record, True))
-            replace = st.form_submit_button("Replace", type="primary", key="replace_confirm",
-                                            on_click=take, args=(text, source, upload_name, record))
+                                          args=(text, source, upload_name, record, True, from_card))
+            replace = st.form_submit_button("Replace", type="primary", key="replace_confirm", on_click=take,
+                                            args=(text, source, upload_name, record, False, from_card))
     if cancel:
         common.finish_dialog()
     if below or replace:
@@ -198,7 +216,7 @@ with st.container(border=True):
     if task["instructions"]:
         st.markdown(common.plain(task["instructions"]))
 
-if returned:
+if shown:
     with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Your teacher's decision", icon=":material/assignment_return:", anchor=False)
@@ -206,7 +224,10 @@ if returned:
             if shown.get("points") and task.get("points"):
                 st.badge("{:g} / {} points".format(float(shown["points"]), task["points"]), color="blue",
                          icon=":material/grade:")
-        st.caption("On version {}, returned {}".format(current["version"], common.when(shown["returned_at"])))
+        st.caption("On version {}, returned {}".format(shown["version"], common.when(shown["returned_at"])))
+        if not returned:
+            st.caption("You handed in version {} after this; your teacher has not returned it yet.".format(
+                current["version"]))
         if shown["note"]:
             st.markdown(common.plain(shown["note"]))
 
@@ -229,7 +250,12 @@ next_version = int(current["version"]) + 1 if current else 1
 write_col, help_col = st.columns([3, 2], gap="large")
 with write_col:
     with st.container(border=True):
-        st.subheader("Your answer" if not current else "A new version", icon=":material/edit_document:", anchor=False)
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.subheader("Your answer" if not current else "A new version", icon=":material/edit_document:",
+                         anchor=False)
+            if current:
+                st.button("Start from version {}".format(current["version"]), icon=":material/content_copy:",
+                          type="tertiary", key="start_from", on_click=start_from, args=(current["submission_id"],))
         mode = st.segmented_control("How", ["Write here", "Upload a .txt file"], default="Write here",
                                     key="write_mode_" + assignment_id, label_visibility="collapsed",
                                     required=True)
@@ -265,16 +291,17 @@ with help_col:
                                       key="assistant_prompt_" + assignment_id)
                 limit = assistant.max_tokens(config)
                 lengths = sorted(v for v in set(assistant.LENGTHS) | {limit} if v <= limit)
-                length = st.select_slider("Length (tokens)", options=lengths, value=min(250, limit),
-                                          key="assistant_length_" + assignment_id,
-                                          help="Shorter drafts give too little evidence for a verdict.")
+                # in words, not tokens; and nothing here about what the detector needs
+                length = st.select_slider("Length", options=lengths, value=min(250, limit),
+                                          format_func=lambda t: "about {} words".format(assistant.words_for(t)),
+                                          key="assistant_length_" + assignment_id)
                 ask = st.form_submit_button("Write a draft", icon=":material/auto_awesome:",
                                             key="assistant_go")
             if ask and common.job_running("assistant_job"):
                 st.info("The assistant is still writing your last draft.", icon=":material/hourglass_top:")
             elif ask:
                 engine, lock = common.engine()
-                words, seconds = int(length * 0.75), length / 4.3
+                words, seconds = assistant.words_for(length), length / 4.3
                 # one model for everyone: a draft already being written goes first
                 waiting = lock.locked()
                 label = ("Waiting for another draft to finish, then writing about {} words."

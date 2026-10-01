@@ -18,7 +18,7 @@ import streamlit as st
 
 import config as cfg
 import verdict
-from classroom import accounts, paths, reports, reviews, store, submissions
+from classroom import accounts, assignments, paths, reports, reviews, store, submissions
 
 log = logging.getLogger("marktext")
 
@@ -657,6 +657,19 @@ def day(iso_date):
     if date is None:
         return iso_date or ""
     return date.strftime("%b %d, %Y").replace(" 0", " ")
+
+
+def unsaved_draft(review):
+    """The teacher's unsaved decision, note and points for a review (kept in
+    st.session_state["review_drafts"] by the Review page) when they differ
+    from what is saved; None otherwise."""
+    draft = st.session_state.get("review_drafts", {}).get(review["review_id"])
+    if not draft:
+        return None
+    graded = assignments.max_points(assignments.get_assignment(review["assignment_id"]) or {})
+    saved = (review["decision"] if review["decision"] != "pending" else None, review["note"],
+             float(review["points"]) if graded and review.get("points") else None)
+    return draft if (draft["decision"], draft["note"], draft["points"] if graded else None) != saved else None
 
 
 def submission_text(sub):

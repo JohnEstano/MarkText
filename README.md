@@ -210,7 +210,7 @@ pytest -q
 
 ## Pages
 
-**Teacher**: Home, Classes (roster, assignments, summary, class export), Review (scoring, decisions, students' files), Records (activity, file check, backups), and under Lab: Generate, Detect, History, Experiment. **Student**: Home, Assignment, My submissions. **Both**: Account (name, password) and About (this README; for the teacher also the list of files MarkText keeps and the configuration with the key hidden).
+**Teacher**: Home, Classes (roster, assignments, summary, class export), Review (scoring, decisions, students' files), Records (activity, file check, backups), and under Lab: Generate, Detect, History, Experiment. **Student**: Home, Assignment, My submissions. **Both**: Account (name, password) and About: for the teacher this README, the list of files MarkText keeps and the configuration with the key hidden; for students a short page of their own (what the classroom is for, that assistant drafts are watermarked, what is kept). How detection works and where it is weak is the teacher's business, not something the student's screens should coach.
 
 ## Experiment: measuring detection
 

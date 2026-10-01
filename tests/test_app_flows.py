@@ -13,8 +13,8 @@ from streamlit.testing.v1 import AppTest
 
 import config as cfg
 import history
-from classroom import (accounts, assignments, assistant, backups, classes, detection, drafts, paths, reviews,
-                       store, submissions)
+from classroom import (accounts, assignments, assistant, backups, classes, detection, drafts, paths, reports,
+                       reviews, store, submissions)
 from ui import common, lab
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -699,6 +699,82 @@ def test_a_draft_still_arrives_when_the_page_reruns_while_the_model_writes(new_a
     follow(at, "student_assignment")
     assert [b for b in at.button if b.key == "draft_use"]           # the draft is there
     assert "assistant_job" not in at.session_state
+
+
+def test_returning_unsaved_changes_saves_them_first(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    rid = reviews.latest_review(sub["submission_id"])["review_id"]
+    at.segmented_control(key="decision_" + rid).set_value("needs_review")
+    at.text_area(key="note_" + rid).input("Add an example from your own life.")
+    ok(at.run())                                                     # changed, not saved
+    assert [b.label for b in at.button if b.key == "return_" + rid] == ["Save and return"]
+    ok(at.button(key="return_" + rid).click().run())
+    assert any("Add an example from your own life" in m.value for m in at.markdown)   # what is sent
+    assert any("Not saved yet: returning saves it first" in c.value for c in at.caption)
+    ok(at.button(key="return_confirm").click().run())
+    saved = reviews.get_review(rid)
+    assert (saved["decision"], saved["note"], saved["returned"]) == \
+        ("needs_review", "Add an example from your own life.", "1")
+    assert reviews.shown_to_student(saved)["note"] == "Add an example from your own life."
+
+
+def test_return_all_warns_about_changes_not_saved(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    classes.join_class(school["class"]["join_code"], "ben")
+    subs = {who: submissions.submit(aid, who, ESSAY) for who in ("alice", "ben")}
+    at = sign_in(new_app(), "prof", "teacherpass")
+    follow(at, "teacher_review")
+    ok(at.button(key="score_all").click().run())
+    rids = {who: reviews.latest_review(s["submission_id"])["review_id"] for who, s in subs.items()}
+    for who in rids:
+        reviews.decide(rids[who], "accepted", "Good.", "prof")
+    at.session_state["review_pick"] = "ben"
+    ok(at.run())
+    at.text_area(key="note_" + rids["ben"]).input("Good, but name your source.")
+    ok(at.run())
+    ok(at.button(key="return_all").click().run())
+    assert any("Not saved yet for" in w.value and "Ben" in w.value for w in at.warning)
+
+
+def test_feedback_stays_in_view_while_the_student_revises(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    sub = submissions.submit(aid, "alice", ESSAY)
+    rev = reviews.record_detection(sub, {"label": "NOT DETECTED", "z_score": -0.5, "repeated": 0},
+                                   "run1", "fake/model", "0a1b2c3d", "prof")
+    reviews.decide(rev["review_id"], "needs_review", "Add an example.", "prof")
+    reviews.return_to_student(rev["review_id"], by="prof")
+    at = sign_in(new_app(), "alice", "studentpass")
+    follow(at, "student_assignment")
+    ok(at.button(key="start_from").click().run())                  # empty editor: no question asked
+    assert at.text_area(key="editor_" + aid).value.strip() == ESSAY.strip()
+    at.text_area(key="editor_" + aid).input(ESSAY + " My grandmother kept one too.")
+    ok(at.button(key="hand_in").click().run())
+    assert "Your teacher's decision" in subheaders(at)              # still there after version 2
+    captions = " ".join(c.value for c in at.caption)
+    assert "On version 1" in captions and "You handed in version 2 after this" in captions
+    assert any("Add an example" in m.value for m in at.markdown)
+    feedback =reports.returned_feedback(aid, "alice")
+    assert (feedback["version"], feedback["note"]) == (1, "Add an example.")
+    follow(at, "student_home")
+    assert any("on version 1; version 2 is with your teacher" in c.value for c in at.caption)
+
+
+def test_students_get_an_about_page_of_their_own_and_lengths_in_words(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    student = sign_in(new_app(), "alice", "studentpass")
+    follow(student, "about")
+    shown = " ".join(m.value for m in student.markdown)
+    assert "hidden watermark" in shown and "z-score" not in shown and "Installation" not in shown
+    follow(student, "student_assignment")
+    length = student.select_slider(key="assistant_length_" + aid)
+    assert length.label == "Length" and not length.help and "about 190 words" in length.options
+    teacher = sign_in(new_app(), "prof", "teacherpass")
+    follow(teacher, "about")
+    assert any("Installation" in m.value for m in teacher.markdown)    # the README, for teachers
 
 
 def tab_goes_field_to_field(at):

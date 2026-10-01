@@ -59,7 +59,8 @@ work = reports.student_overview(user["username"])
 open_work = [w for w in work if w["status"] == "open"]
 to_hand_in = [w for w in open_work if w["my_state"] == "not submitted"]
 waiting = [w for w in work if w["my_state"] == "submitted"]
-returned = [w for w in work if w["my_state"] == "returned"]
+# feedback stays here after a new version is handed in: the student revises with it
+returned = [w for w in work if w["decision"]]
 due_this_week = sum(reports.due_soon(w["due_at"]) for w in to_hand_in)
 returned_this_week = sum(reports.recent(w["returned_at"]) for w in returned)
 
@@ -89,7 +90,10 @@ with left.container(border=True, height="stretch"):
         with st.container(horizontal=True, vertical_alignment="center"):
             with st.container():
                 st.markdown("**{}**".format(common.md(item["title"])))
-                st.caption("{} · returned {}".format(common.md(item["class_name"]), common.when(item["returned_at"])))
+                later = (" · on version {}; version {} is with your teacher".format(
+                    item["returned_version"], item["version"]) if item["returned_version"] != item["version"] else "")
+                st.caption("{} · returned {}{}".format(common.md(item["class_name"]), common.when(item["returned_at"]),
+                                                       later))
             common.decision_badge(item["decision"])
             st.button("View", key="view_" + item["assignment_id"], type="tertiary",
                       on_click=common.open_assignment, args=(item["assignment_id"],))

@@ -33,6 +33,12 @@ def max_tokens(config):
     return int(config.get("classroom", {}).get("assistant_max_tokens", 300))
 
 
+def words_for(tokens):
+    """About how many English words a draft of `tokens` tokens has (0.75 a
+    token), rounded to ten: what the student is shown instead of tokens."""
+    return int(int(tokens) * 0.75 / 10 + 0.5) * 10
+
+
 def draft(engine, lock, prompt, max_new_tokens=None, cancel_event=None):
     """Generate a watermarked draft (always watermarked). Returns the
     engine's result dict; the length is clamped to the configured limit."""

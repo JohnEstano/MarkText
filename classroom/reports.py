@@ -203,21 +203,36 @@ def teacher_overview(username, now=None):
             "old_scores": old}
 
 
+def returned_feedback(assignment_id, username):
+    """What the teacher last returned on this student's work for the
+    assignment, from the newest version that was returned: shown_to_student()
+    plus "version", or None. A version handed in since does not hide it: the
+    student revises with the feedback in view."""
+    for sub in reversed(submissions.versions(assignment_id, accounts.normalise_username(username))):
+        shown = reviews.shown_to_student(reviews.latest_review(sub["submission_id"]))
+        if shown:
+            return dict(shown, version=int(sub["version"]))
+    return None
+
+
 def student_overview(username):
     """Each assignment in the student's classes with the student's own state.
     Detector numbers and labels are not part of it: a student sees only the
-    teacher's decision and note, and only after the work is returned."""
+    teacher's decision and note, and only after the work is returned. The
+    feedback is the newest returned one (returned_feedback); my_state is
+    about the current version."""
     username = accounts.normalise_username(username)
     class_names = {c["class_id"]: c["name"] for c in classes.classes_for_student(username)}
     rows = []
     for task in assignments.for_student(username):
         sub = submissions.current_submission(task["assignment_id"], username)
-        shown = reviews.shown_to_student(reviews.latest_review(sub["submission_id"])) if sub else None
+        shown = returned_feedback(task["assignment_id"], username) if sub else None
+        current_returned = shown is not None and shown["version"] == int(sub["version"])
         rows.append({
             "assignment_id": task["assignment_id"], "title": task["title"],
             "class_name": class_names.get(task["class_id"], ""), "due_at": task["due_at"],
             "status": task["status"],
-            "my_state": "returned" if shown else ("submitted" if sub else "not submitted"),
+            "my_state": "returned" if current_returned else ("submitted" if sub else "not submitted"),
             "version": int(sub["version"]) if sub else None,
             "submitted_at": sub["submitted_at"] if sub else "",
             "decision": shown["decision"] if shown else "",
@@ -225,6 +240,7 @@ def student_overview(username):
             "points": shown["points"] if shown else "",
             "max_points": task.get("points", ""),
             "returned_at": shown["returned_at"] if shown else "",
+            "returned_version": shown["version"] if shown else None,
         })
     return rows
 

@@ -111,9 +111,15 @@ def rename_class(class_id, teacher):
 @st.dialog("Return every decided submission?", icon=":material/assignment_return:",
            on_dismiss=common.close_dialog)
 def return_all(review_ids, teacher):
-    names = [common.display_name(reviews.get_review(r)["username"]) for r in review_ids]
+    listed = [reviews.get_review(r) for r in review_ids]
+    names = [common.display_name(r["username"]) for r in listed]
     st.write("These students will see your decision and your note: {}.".format(
         ", ".join("**{}**".format(common.md(n)) for n in names)))
+    unsaved = [common.display_name(r["username"]) for r in listed if common.unsaved_draft(r)]
+    if unsaved:
+        st.warning("Not saved yet for {}: they get the decision you last saved. Cancel and save "
+                   "first to send the change.".format(", ".join("**{}**".format(common.md(n)) for n in unsaved)),
+                   icon=":material/edit_note:")
     with st.form("return_all", border=False):
         cancel, confirm = _buttons("return_all_cancel", "Return {}".format(len(review_ids)),
                                    "return_all_confirm")
@@ -221,23 +227,54 @@ def reset_password(class_id, username, teacher):
 @st.dialog("Return to the student?", icon=":material/assignment_return:",
            on_dismiss=common.close_dialog)
 def return_work(review_id, teacher):
+    """Shows exactly what the student will get. Changes not saved yet (the
+    Review page keeps them per review) are what is returned, saved first:
+    read here, when the dialog opens, so a note typed just before the click
+    is included."""
     review = reviews.get_review(review_id)
-    st.write("**{}** will see your decision, **{}**, and your note. The detector's numbers stay "
-             "on your side.".format(common.md(common.display_name(review["username"])),
-                                    common.decision_text(review["decision"])))
+    draft = common.unsaved_draft(review)
+    graded = assignments.max_points(assignments.get_assignment(review["assignment_id"]) or {})
+    if draft:
+        decision, note, points = draft["decision"], draft["note"], draft["points"]
+    else:
+        decision, note = review["decision"], review["note"]
+        points = float(review["points"]) if review.get("points") else None
+    name = common.md(common.display_name(review["username"]))
+    if not decision or decision == "pending":
+        st.write("Choose a decision for **{}** before returning the work.".format(name))
+        if st.button("Close", key="return_cancel"):
+            common.finish_dialog()
+        return
+    st.write("**{}** will see this. The detector's numbers stay on your side.".format(name))
+    with st.container(border=True):
+        with st.container(horizontal=True, vertical_alignment="center"):
+            common.decision_badge(decision)
+            if graded and points is not None:
+                st.badge("{:g} / {} points".format(float(points), graded), color="blue", icon=":material/grade:")
+        if note:
+            st.markdown(common.plain(note))
+        else:
+            st.caption("No note.")
+    if draft:
+        st.caption(":material/edit_note: Not saved yet: returning saves it first.")
     shown = reviews.shown_to_student(review)
     if shown:
         st.caption("This replaces what they see now: {}, returned {}.".format(
             common.decision_text(shown["decision"]), common.when(shown["returned_at"])))
     with st.form("return_work", border=False):
-        cancel, confirm = _buttons("return_cancel", "Return", "return_confirm")
+        cancel, confirm = _buttons("return_cancel", "Save and return" if draft else "Return", "return_confirm")
     if cancel:
         common.finish_dialog()
     if confirm:
         try:
+            if draft:
+                reviews.decide(review_id, decision, note, teacher,
+                               points=("" if points is None else points) if graded else None)
             reviews.return_to_student(review_id, by=teacher)
         except ValueError as exc:
             st.error(common.md(str(exc)), icon=":material/error:")
         else:
-            common.finish_dialog("Returned to {}.".format(common.display_name(review["username"])),
+            st.session_state.get("review_drafts", {}).pop(review_id, None)
+            common.finish_dialog("{} to {}.".format("Saved and returned" if draft else "Returned",
+                                                    common.display_name(review["username"])),
                                  ":material/assignment_return:")

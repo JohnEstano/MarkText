@@ -1,5 +1,7 @@
-"""About MarkText: the README, the configuration (key hidden) and, for the
-teacher, an inventory of every file the classroom keeps."""
+"""About MarkText. Teachers: the README, the configuration (key hidden) and
+an inventory of every file the classroom keeps. Students: a short page of
+their own; the README explains how detection works and where it is weak,
+which is the teacher's business, not something to coach students in."""
 
 import pandas as pd
 import streamlit as st
@@ -11,6 +13,21 @@ from ui import common, lab
 
 user = common.current_user()
 st.title("About", anchor=False)
+
+FOR_STUDENTS = """
+MarkText Classroom is where you hand in written work for your classes. Your teacher posts
+assignments; you write your answer here or upload a .txt file, and hand it in. You can hand in
+new versions while the assignment is open, and your teacher returns your work with a decision
+and a note.
+
+**The writing assistant.** The Assignment page can write a first draft for you. Its drafts
+carry a hidden watermark, so your teacher can tell when text came from the assistant. Ask your
+teacher whether you may use it for an assignment, and say so in your note when you do.
+
+**What is kept.** Your account (your password only as a one-way hash), every version you hand
+in, and the answer you are still writing, so that signing out does not lose it. Your teacher
+sees what you hand in, not the answer you are still writing.
+"""
 
 if user["role"] == "teacher":
     with st.expander("Files MarkText keeps", icon=":material/folder_open:"):
@@ -46,5 +63,6 @@ if user["role"] == "teacher":
     with st.expander("Configuration (config/watermark_config.json, key hidden)",
                      icon=":material/settings:"):
         st.json(cfg.redacted(cfg.load_config()))
-
-st.markdown(lab.read_readme())
+    st.markdown(lab.read_readme())
+else:
+    st.markdown(FOR_STUDENTS)

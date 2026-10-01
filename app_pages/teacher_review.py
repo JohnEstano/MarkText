@@ -404,8 +404,8 @@ with st.container(border=True):
                     st.number_input("Points (out of {})".format(graded), min_value=0.0, max_value=float(graded),
                                     step=0.5, key="points_" + rid, on_change=keep_draft, args=(rid,),
                                     value=draft["points"] if draft else saved_points, format="%g")
-                if draft and (draft["decision"], draft["note"], draft["points"] if graded else None) != \
-                        (saved_decision, review["note"], saved_points if graded else None):
+                unsaved = common.unsaved_draft(review)
+                if unsaved:
                     st.caption(":material/edit_note: Not saved yet.")
                 changed = reviews.changed_since_return(review)
                 if changed:
@@ -414,22 +414,21 @@ with st.container(border=True):
                                "**{}**{} until you return it again.".format(
                                    common.decision_text(shown["decision"]),
                                    " and your earlier note" if shown["note"] else ""))
+                # what Return would send: the unsaved decision when there is one (the
+                # dialog saves it first), so a change is never left behind by accident
+                decision_now = unsaved["decision"] if unsaved else saved_decision
                 with st.container(horizontal=True, vertical_alignment="center"):
                     st.button("Save decision", key="save_" + rid, on_click=save_decision, args=(rid,))
-                    if review["returned"] == "1" and not changed:
+                    if review["returned"] == "1" and not changed and not unsaved:
                         st.badge("Returned {}".format(common.when(review["returned_at"])), color="green",
                                  icon=":material/done_all:")
-                    elif changed:
-                        st.button("Return again", type="primary",
-                                  icon=":material/assignment_return:", key="return_" + rid,
-                                  on_click=common.open_dialog, args=("return_work",),
-                                  kwargs={"review_id": rid, "teacher": teacher})
-                    elif review["decision"] != "pending":
-                        st.button("Return to student", type="primary",
+                    elif decision_now:
+                        st.button("Save and return" if unsaved else "Return again" if changed
+                                  else "Return to student", type="primary",
                                   icon=":material/assignment_return:", key="return_" + rid,
                                   on_click=common.open_dialog, args=("return_work",),
                                   kwargs={"review_id": rid, "teacher": teacher})
                     else:
-                        st.caption("Save a decision, then return the work.")
+                        st.caption("Choose a decision, then return the work.")
 
 common.render_dialogs({"return_work": dialogs.return_work, "return_all": dialogs.return_all})
