@@ -14,7 +14,7 @@
 
 torch==2.14.0
 transformers==5.17.0
-streamlit==1.64.0
+streamlit==1.65.0
 pandas==3.0.6
 altair==6.3.0
 

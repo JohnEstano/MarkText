@@ -34,8 +34,10 @@ def test_ensure_creates_header_once(hist):
 def test_append_returns_unique_ids_and_all_columns(hist):
     a = hist.append_history(STATS, source="file", filename="a.txt")
     b = hist.append_history(STATS, source="manual",
-                            extra={"mode": "watermarked", "seed": 42, "batch_id": "b1",
-                                   "max_new_tokens": 300, "gen_tokens": 281, "note": "hi"})
+                            extra={"mode": "watermarked", "model": "smol360", "seed": 42,
+                                   "batch_id": "b1", "max_new_tokens": 300, "gen_tokens": 281,
+                                   "note": "hi"},
+                            text="line one\nline two, with a comma")
     assert a != b and len(a) == 8
     rows = hist.read_history()                  # newest first
     assert rows[0]["run_id"] == b and rows[1]["run_id"] == a
@@ -45,7 +47,30 @@ def test_append_returns_unique_ids_and_all_columns(hist):
     assert r["green_pct"] == "69.68" and r["z_score"] == "6.55" and r["p_value"] == "2.900e-11"
     assert r["bias"] == "3.0" and r["context_width"] == "5" and r["device"] == "cpu"
     assert r["note"] == "hi" and r["result"] == "LIKELY MARKTEXT"
+    assert r["model"] == "smol360"
+    assert r["content"] == "line one\nline two, with a comma"   # multiline survives the round trip
+    assert rows[1]["model"] == "" and rows[1]["content"] == ""
     assert list(r.keys()) == hist.COLUMNS
+
+
+def test_model_falls_back_to_the_scoring_engine(hist):
+    stats = dict(STATS, model="qwen15")
+    hist.append_history(stats, source="manual")
+    assert hist.read_history()[0]["model"] == "qwen15"
+
+
+def test_file_without_model_and_content_is_extended(hist):
+    cols = [c for c in hist.COLUMNS if c not in ("model", "content")]
+    hist.HISTORY_PATH.parent.mkdir(parents=True)
+    with open(hist.HISTORY_PATH, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        w.writerow({c: "" for c in cols} | {"tokens_scored": 100, "z_score": 1.0})
+    assert hist.ensure_history() is not None     # archived first
+    rows = hist.read_history()
+    assert len(rows) == 1 and rows[0]["model"] == "" and rows[0]["content"] == ""
+    assert rows[0]["tokens_scored"] == "100"
+    assert hist.ensure_history() is None         # second call: nothing to do
 
 
 def test_append_rejects_unknown_source(hist):

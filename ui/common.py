@@ -77,7 +77,7 @@ def dismiss_notes():
 
 
 # ------------------------------------------------------------------ model
-MODEL = {"loaded": False, "model_id": "", "device": ""}
+MODEL = {"loaded": False, "model": "", "model_id": "", "device": ""}
 
 
 def make_engine(config):
@@ -86,13 +86,24 @@ def make_engine(config):
     return engine.Engine(config)
 
 
+def resolve_model(config, model):
+    """A catalog short name or None (the default); ValueError when unknown."""
+    name = model or cfg.default_model_name(config)
+    if name not in config.get("models", {}):
+        raise ValueError("Unknown model {!r}; choose one of: {}".format(
+            model, ", ".join(cfg.model_names(config))))
+    return name
+
+
 @st.cache_resource(show_spinner=False)          # engine() shows a message for the person's role
-def get_engine():
-    """One engine per server process, shared by every browser tab. The lock
-    serialises calls, because the model is one object used by all sessions."""
+def get_engine(model=None):
+    """One engine per model per server process, shared by every browser tab.
+    The lock serialises calls, because a model is one object used by all
+    sessions. Each model loads (and downloads) only when first chosen."""
     config = cfg.load_config()
-    eng = make_engine(config)
-    MODEL.update(loaded=True, model_id=config["model_id"], device=eng.device)
+    eng = make_engine(cfg.config_for_model(config, resolve_model(config, model)))
+    MODEL.update(loaded=True, model=eng.config.get("default_model", ""),
+                 model_id=eng.config["model_id"], device=eng.device)
     return eng, threading.Lock()
 
 
@@ -103,63 +114,108 @@ def make_scorer(config):
 
 
 @st.cache_resource(show_spinner="Loading the tokenizer...")
-def get_scorer():
-    """One scorer per server process, with its own lock: scoring needs the
-    tokenizer and the model's configuration, never the weights, so the
-    teacher does not wait for the model to load or for a student's draft."""
-    return make_scorer(cfg.load_config()), threading.Lock()
+def get_scorer(model=None):
+    """One scorer per model per server process, with its own lock: scoring
+    needs the tokenizer and the model's configuration, never the weights,
+    so the teacher does not wait for the model to load or for a student's
+    draft. A model's tokenizer (megabytes) downloads on first use."""
+    config = cfg.load_config()
+    return make_scorer(cfg.config_for_model(config, resolve_model(config, model))), \
+        threading.Lock()
 
 
-def scorer():
-    """(scorer, lock) for detection. A config edited since (a new key, other
-    thresholds) builds a new scorer, which takes about a second."""
-    sc, lock = get_scorer()
-    if cfg.load_config() != sc.config:
+def scorer(model=None):
+    """(scorer, lock) for detection with one model. A config edited since (a
+    new key, other thresholds) builds a new scorer, which takes about a
+    second."""
+    config = cfg.load_config()
+    name = resolve_model(config, model)
+    sc, lock = get_scorer(name)
+    if cfg.config_for_model(config, name) != sc.config:
         get_scorer.clear()
-        sc, lock = get_scorer()
+        sc, lock = get_scorer(name)
     return sc, lock
 
 
 @st.cache_resource(show_spinner="Loading the tokenizer...")
-def get_retired_scorer(key_id, fingerprint):
-    """A scorer for a retired key (see config.rotate_key), one per key id;
-    `fingerprint` (the config without keys) makes an edited config build a
-    new one."""
-    return make_scorer(cfg.config_for_key(cfg.load_config(), key_id)), threading.Lock()
+def get_model_scorer(model, key_id, fingerprint):
+    """A scorer for one model's key (see config.rotate_key): key_id None
+    means its current key, otherwise a retired one. One cache entry per
+    (model, key); `fingerprint` (the config without keys) makes an edited
+    config build a new one."""
+    config = cfg.load_config()
+    name = resolve_model(config, model)
+    if key_id is None:
+        resolved = cfg.config_for_model(config, name)
+    else:
+        found = cfg.config_for_key(config, key_id)
+        if found is None:
+            raise ValueError("Unknown key id {!r}.".format(key_id))
+        name, resolved = found
+    return make_scorer(resolved), threading.Lock()
 
 
 def scorer_for(submission):
     """(scorer, lock) for one submission: an assistant draft is scored with
-    the key it was made with when that key has been retired; everything
-    else with the current key."""
+    the model and key it was made with (from its sidecar), which may be
+    retired; everything else with the default model's current key."""
     from classroom import detection     # late: detection imports history
+    from classroom import submissions
     config = cfg.load_config()
-    key_id = detection.drafted_with(submission)
-    if key_id and key_id != config["watermark"]["key_id"] and cfg.config_for_key(config, key_id):
-        return get_retired_scorer(key_id, repr(cfg.redacted(config)))
-    return scorer()
+    gen = (submissions.sidecar(submission) or {}).get("generation") or {}
+    key_id = gen.get("key_id") or detection.drafted_with(submission)
+    name = cfg.model_for_sidecar(config, gen)
+    if key_id:
+        found = cfg.config_for_key(config, key_id)
+        if found is not None:
+            found_name, _resolved = found
+            current = (config["models"][found_name]["watermark"] or {}).get("key_id") \
+                if found_name in config.get("models", {}) else None
+            if key_id != current:
+                return get_model_scorer(found_name, key_id, repr(cfg.redacted(config)))
+            name = found_name
+    return scorer(name)
 
 
-def engine():
-    """(engine, lock), loading the model on first use. A config edited since
-    the model loaded (a new key, other thresholds) is adopted first, so a
-    score always uses the key the pages name; a new model id or device
-    loads a new engine."""
-    if MODEL["loaded"]:
-        eng, lock = get_engine()
-    else:
+def engine(model=None):
+    """(engine, lock) for one model, loading it on first use (that is when
+    it downloads). A config edited since the model loaded (a new key, other
+    thresholds) is adopted first, so a score always uses the key the pages
+    name; a new model id or device loads a new engine."""
+    config = cfg.load_config()
+    name = resolve_model(config, model)
+    first = not MODEL["loaded"] or MODEL.get("model") != name
+    if first:
         student = (current_user() or {}).get("role") == "student"
+        label = cfg.model_label(config, name)
         with st.spinner("Starting the writing assistant (about 20 s the first time)..." if student
-                        else "Loading the language model (the first run downloads about 1 GB)..."):
-            eng, lock = get_engine()
-    config = cfg.load_config()
-    if config != eng.config:
+                        else "Loading {} (downloads on first use)...".format(label)):
+            eng, lock = get_engine(name)
+    else:
+        eng, lock = get_engine(name)
+    resolved = cfg.config_for_model(config, name)
+    if resolved != eng.config:
         with lock:
-            adopted = config == eng.config or eng.reconfigure(config)
+            adopted = resolved == eng.config or eng.reconfigure(resolved)
         if not adopted:
             get_engine.clear()
-            eng, lock = get_engine()
+            eng, lock = get_engine(name)
+    MODEL.update(loaded=True, model=name, model_id=eng.config["model_id"], device=eng.device)
     return eng, lock
+
+
+def pick_model(config, key="model_pick", label="Model"):
+    """A model dropdown bound to session state (shared by the lab pages):
+    short names in, the chosen name out. Each model watermarks with its own
+    key, so the history says which model made a text."""
+    names = cfg.model_names(config)
+    current = st.session_state.get(key) or cfg.default_model_name(config)
+    if current not in names:
+        current = cfg.default_model_name(config)
+    return st.selectbox(label, names, index=names.index(current),
+                        format_func=lambda n: cfg.model_label(config, n), key=key,
+                        help="Each model has its own watermark key; only the chosen model "
+                             "downloads.")
 
 
 # ------------------------------------------------------------------ long work

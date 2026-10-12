@@ -118,6 +118,7 @@ def run_batch(engine, prompts, lengths, runs=1, modes=MODES, seed_base=None,
             "runs": runs,
             "modes": list(modes),
             "seed_base": seed_base,
+            "model": getattr(engine, "model_name", ""),
             "model_id": engine.config["model_id"],
             "device": engine.device,
             "watermark": dict(cfg.public_watermark(engine.config),
@@ -159,12 +160,14 @@ def run_batch(engine, prompts, lengths, runs=1, modes=MODES, seed_base=None,
         if stats is None:
             # too short to score at all: log a placeholder so the cell counts
             stats = verdict.placeholder_stats(engine.config, engine.device)
-        extra = {"mode": mode, "batch_id": batch_id, "max_new_tokens": L,
+        extra = {"mode": mode, "model": getattr(engine, "model_name", ""),
+                 "batch_id": batch_id, "max_new_tokens": L,
                  "seed": seed, "gen_tokens": gen["new_tokens"],
                  "note": json.dumps({"p": p, "r": r})}
         for attempt in range(APPEND_RETRIES):
             try:
-                run_id = history.append_history(stats, source="batch", filename="", extra=extra)
+                run_id = history.append_history(stats, source="batch", filename="",
+                                                extra=extra, text=gen["text"])
                 break
             except OSError:
                 if attempt == APPEND_RETRIES - 1:
@@ -244,6 +247,9 @@ def main(argv=None):
     ap.add_argument("--lengths", type=int, nargs="+", default=[150])
     ap.add_argument("--runs", type=int, default=1)
     ap.add_argument("--modes", nargs="+", default=list(MODES), choices=MODES)
+    ap.add_argument("--model", default=None, metavar="NAME",
+                    help="catalog model to generate with (default: default_model); "
+                         "only this model downloads")
     ap.add_argument("--seed", type=int, default=None, help="seed base; each cell derives its own seed from it")
     ap.add_argument("--resume", default=None, metavar="BATCH_ID")
     ap.add_argument("--summary-only", default=None, metavar="BATCH_ID",
@@ -259,8 +265,13 @@ def main(argv=None):
 
     from engine import Engine   # imported late: loading the model is slow
     prompts = load_prompts(args.prompt_file, args.prompts)
-    print("Loading model...")
-    engine = Engine(config, progress_callback=print)
+    try:
+        name = args.model or cfg.default_model_name(config)
+        resolved = cfg.config_for_model(config, name)
+    except ValueError as exc:
+        ap.error(str(exc))
+    print("Loading model {} ({})...".format(name, resolved["model_id"]))
+    engine = Engine(resolved, model=name, progress_callback=print)
     total = len(prompts) * len(args.lengths) * len(args.modes) * args.runs
     print("Batch: {} prompts x {} x {} x {} run(s) = {} generations".format(
         len(prompts), args.lengths, args.modes, args.runs, total))

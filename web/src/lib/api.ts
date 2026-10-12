@@ -58,6 +58,7 @@ export interface Health {
 export interface Generation {
   text: string;
   mode: Mode;
+  model: string;
   watermarked: boolean;
   cancelled: boolean;
   seed: number;
@@ -73,6 +74,7 @@ export interface Generation {
 }
 
 export interface Detection {
+  model: string;
   num_tokens_scored: number;
   num_green_tokens: number;
   green_fraction: number;
@@ -93,7 +95,9 @@ export interface HistoryRow {
   timestamp: string;
   source: string;
   filename: string;
+  content: string;
   mode: string;
+  model: string;
   batch_id: string;
   max_new_tokens: number | null;
   seed: number | null;
@@ -117,7 +121,7 @@ export interface HistoryResponse {
   kpis: { count: number; mean_z: number | null; flagged_rate: number | null; median_tokens: number | null };
   summary: Array<Record<string, string | number>>;
   rows: HistoryRow[];
-  options: { results: string[]; sources: string[]; batches: string[] };
+  options: { results: string[]; sources: string[]; batches: string[]; models: string[] };
   thresholds: { detection_threshold: number; possible_threshold: number; min_tokens_for_verdict: number };
 }
 
@@ -129,6 +133,15 @@ export interface HistoryFilters {
   date_from?: string;
   date_to?: string;
   min_tokens?: number;
+  model?: string[];
+}
+
+export interface ModelOption {
+  name: string;
+  model_id: string;
+  label: string;
+  approx_size: string;
+  key_id: string | null;
 }
 
 export interface BatchSummaryRow {
@@ -181,7 +194,8 @@ export const api = {
   readme: () => request<{ markdown: string }>("/readme"),
   prompts: () => request<{ count: number; path: string; prompts: string[] }>("/prompts"),
 
-  generate: (body: { prompt: string; max_new_tokens: number; mode: Mode; seed?: number | null }) =>
+  models: () => request<{ default: string; models: ModelOption[] }>("/models"),
+  generate: (body: { prompt: string; max_new_tokens: number; mode: Mode; seed?: number | null; model?: string | null }) =>
     request<Generation>("/generate", { method: "POST", body: JSON.stringify(body) }),
   save: (generation: Generation) =>
     request<{ text_path: string; sidecar_path: string }>("/generate/save", {
@@ -189,7 +203,7 @@ export const api = {
       body: JSON.stringify({ generation }),
     }),
 
-  detect: (body: { text: string; filename?: string; source?: "manual" | "file"; extra?: Record<string, unknown> }) =>
+  detect: (body: { text: string; filename?: string; source?: "manual" | "file"; extra?: Record<string, unknown>; model?: string | null }) =>
     request<Detection>("/detect", { method: "POST", body: JSON.stringify(body) }),
 
   history: (f: HistoryFilters = {}) => request<HistoryResponse>(`/history${qs({ ...f })}`),
@@ -205,7 +219,7 @@ export const api = {
     request<{ batches: Array<{ batch_id: string; rows: number; settings: Record<string, unknown> | null }>; job: JobState }>(
       "/experiments",
     ),
-  startExperiment: (body: { n_prompts: number; lengths: number[]; runs: number; seed_base: number; resume?: string | null }) =>
+  startExperiment: (body: { n_prompts: number; lengths: number[]; runs: number; seed_base: number; resume?: string | null; model?: string | null }) =>
     request<JobState>("/experiments", { method: "POST", body: JSON.stringify(body) }),
   experiment: (id: string) => request<BatchDetail>(`/experiments/${id}`),
   stopExperiment: (id: string) => request<JobState>(`/experiments/${id}/stop`, { method: "POST" }),

@@ -13,6 +13,7 @@ class GenerateRequest(BaseModel):
     max_new_tokens: int = Field(default=300, ge=50, le=2000)
     mode: Mode = "watermarked"
     seed: int | None = None
+    model: str | None = Field(default=None, description="Catalog short name; default model when omitted")
 
 
 class SaveRequest(BaseModel):
@@ -24,6 +25,7 @@ class DetectRequest(BaseModel):
     filename: str = ""
     source: Source = "manual"
     extra: dict[str, Any] = Field(default_factory=dict)
+    model: str | None = Field(default=None, description="Catalog short name to score with")
 
 
 class RecordUpdate(BaseModel):
@@ -38,3 +40,4 @@ class ExperimentRequest(BaseModel):
     seed_base: int = Field(default=100, ge=0)
     resume: str | None = None
     modes: list[Mode] = Field(default_factory=lambda: ["normal", "watermarked"])
+    model: str | None = Field(default=None, description="Catalog short name to generate with")

@@ -8,6 +8,28 @@ def test_health_and_config(client):
     assert c["watermark"]["hashing_key"] == "(hidden)"
 
 
+def test_models_lists_the_catalog_without_keys(client):
+    m = client.get("/models").json()
+    assert m["default"] and len(m["models"]) >= 2
+    assert all(set(x) == {"name", "model_id", "label", "approx_size", "key_id"} for x in m["models"])
+    assert "hashing_key" not in client.get("/models").text
+    c = client.get("/config").json()
+    assert c["watermark"]["hashing_key"] == "(hidden)"
+    assert all(e["watermark"]["hashing_key"] == "(hidden)" for e in c["models"].values())
+
+
+def test_unknown_model_is_rejected(client):
+    assert client.post("/generate", json={"prompt": "hi", "model": "llama"}).status_code == 422
+    assert client.post("/detect", json={"text": "wm " * 150, "model": "llama"}).status_code == 422
+
+
+def test_history_model_filter(client):
+    client.post("/detect", json={"text": "wm " * 150}).json()
+    h = client.get("/history", params={"model": ["qwen05"]}).json()
+    assert h["kpis"]["count"] == 0 and h["total"] == 1
+    assert client.get("/history").json()["options"]["models"] == []
+
+
 def test_generate_and_save(client):
     r = client.post("/generate", json={"prompt": "hi", "max_new_tokens": 60, "mode": "normal", "seed": 5})
     assert r.status_code == 200

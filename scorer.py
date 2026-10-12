@@ -135,6 +135,8 @@ class Scorer:
 
     def __init__(self, config, tokenizer=None, model_config=None):
         self.config = config
+        # resolved configs name their model in default_model (config_for_model)
+        self.model_name = config.get("default_model", "")
         self.tokenizer = tokenizer or AutoTokenizer.from_pretrained(config["model_id"])
         model_config = model_config or AutoConfig.from_pretrained(config["model_id"])
         self.bos_token_id = model_config.bos_token_id

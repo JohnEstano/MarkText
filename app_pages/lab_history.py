@@ -108,15 +108,20 @@ with st.container(border=True):
     dates = f3.date_input("Date range", (dmin, dmax), min_value=dmin, max_value=dmax, key="hist_dates")
     min_tok = f4.number_input("Min tokens", 0, int(df["tokens_scored"].max()), 0, step=10,
                               key="hist_min_tokens")
-    g1, g2 = st.columns(2)
+    g1, g2, g3 = st.columns(3)
     sources = sorted(df["source"].unique())
     pick_src = g1.pills("Source", sources, default=sources, selection_mode="multi", key="hist_sources")
     batches = ["(all)"] + sorted(b for b in df["batch_id"].unique() if b)
     pick_batch = g2.selectbox("Batch", batches, key="hist_batch")
+    models = sorted(m for m in df["model"].unique() if m)
+    pick_models = g3.pills("Model", models, default=models, selection_mode="multi",
+                           key="hist_models") if models else []
 
 mask = df["result"].isin(pick) & df["source"].isin(pick_src or [])
 if pick_batch != "(all)":
     mask &= df["batch_id"] == pick_batch
+if models:
+    mask &= df["model"].isin(pick_models or [])
 if query:
     mask &= df["filename"].str.contains(query, case=False, na=False, regex=False)
 if isinstance(dates, tuple) and len(dates) == 2:
@@ -144,11 +149,14 @@ else:
             st.caption("Dashed line: the detection threshold, z = {}.".format(
                 config["detection_threshold"]))
     has_modes = (filtered["mode"] != "").any()
-    summary = lab.summarise(filtered, ("mode", "result") if has_modes else ("result",))
+    has_models = len([m for m in filtered["model"].unique() if m]) > 1
+    by = (["model"] if has_models else []) + (["mode"] if has_modes else []) + ["result"]
+    summary = lab.summarise(filtered, tuple(by))
     with right:
         with st.container(border=True):
-            st.subheader("Summary by {}result".format("mode and " if has_modes else ""), anchor=False)
+            st.subheader("Summary by {}".format(", ".join(by)), anchor=False)
             st.dataframe(summary, hide_index=True, column_config={
+                "model": st.column_config.TextColumn("Model"),
                 "mode": st.column_config.TextColumn("Mode"),
                 "result": st.column_config.TextColumn("Result"),
                 "analyses": st.column_config.NumberColumn("Scores", format="%d"),
@@ -181,13 +189,24 @@ else:
         shown = ordered.iloc[start:start + PER_PAGE]
         state["_history_rows"] = list(shown["run_id"])
         st.caption("Select a row to change its note or filename below.")
-        table_slot.dataframe(shown, hide_index=True, placeholder="", key="history_table",
+        cols = [c for c in shown.columns if c not in ("model", "content")]
+        if "mode" in cols:
+            cols.insert(cols.index("mode") + 1, "model")
+        elif "model" in shown.columns:
+            cols.append("model")
+        if "filename" in cols:
+            cols.insert(cols.index("filename") + 1, "content")
+        elif "content" in shown.columns:
+            cols.append("content")
+        table_slot.dataframe(shown[cols], hide_index=True, placeholder="", key="history_table",
                              on_select=pick_record, selection_mode="single-row", column_config={
             "run_id": st.column_config.TextColumn("Run"),
             "timestamp": st.column_config.DatetimeColumn("Time", format="YYYY-MM-DD HH:mm:ss"),
             "source": st.column_config.TextColumn("Source"),
             "filename": st.column_config.TextColumn("File"),
+            "content": st.column_config.TextColumn("Analyzed text", width="large"),
             "mode": st.column_config.TextColumn("Mode"),
+            "model": st.column_config.TextColumn("Model"),
             "batch_id": st.column_config.TextColumn("Batch"),
             "max_new_tokens": st.column_config.NumberColumn("Max tokens", format="%d"),
             "seed": st.column_config.NumberColumn("Seed", format="%d"),
@@ -217,6 +236,8 @@ with st.expander("Manage one record by its run id", icon=":material/edit:", expa
         st.warning("No record has the run id {}.".format(rid), icon=":material/search_off:")
     if record:
         st.dataframe(pd.DataFrame([record]), hide_index=True)
+        st.text_area("Analyzed text (read-only)", value=record.get("content", ""),
+                     height=150, disabled=True, key="manage_content")
         st.text_input("Filename", value=record.get("filename", ""), key="manage_filename")
         st.text_input("Note", value=record.get("note", ""), key="manage_note")
         st.caption("Only the note and the filename can change; measurements cannot. A backup is "

@@ -84,7 +84,7 @@ export default function HistoryPage() {
       {error && <Notice tone="danger">{error}</Notice>}
 
       {/* filters: one combined mask on the server */}
-      <Panel className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-5">
+      <Panel className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-6">
         <div className="space-y-1.5">
           <Label htmlFor="f-result">Result</Label>
           <Select
@@ -117,6 +117,19 @@ export default function HistoryPage() {
             <option value="">All</option>
             {data?.options.batches.map((b) => (
               <option key={b}>{b}</option>
+            ))}
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="f-model">Model</Label>
+          <Select
+            id="f-model"
+            value={filters.model?.[0] ?? ""}
+            onChange={(e) => updateFilters({ ...filters, model: e.target.value ? [e.target.value] : undefined })}
+          >
+            <option value="">All</option>
+            {data?.options.models.map((m) => (
+              <option key={m}>{m}</option>
             ))}
           </Select>
         </div>
@@ -206,7 +219,7 @@ export default function HistoryPage() {
                   <table className="w-full text-sm">
                     <thead className="bg-bg-muted text-left text-xs text-fg-muted">
                       <tr>
-                        {["run id", "time", "source", "mode", "filename", "tokens", "green %", "z", "p", "result", ""].map((h) => (
+                          {["run id", "time", "source", "mode", "model", "filename", "text", "tokens", "green %", "z", "p", "result", ""].map((h) => (
                           <th key={h} className="whitespace-nowrap px-3 py-2 font-medium">
                             {h}
                           </th>
@@ -220,8 +233,12 @@ export default function HistoryPage() {
                           <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-fg-muted">{r.timestamp}</td>
                           <td className="px-3 py-2 text-xs">{r.source}</td>
                           <td className="px-3 py-2 text-xs">{r.mode || <span className="text-fg-faint">-</span>}</td>
+                          <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-fg-muted">{r.model || <span className="text-fg-faint">-</span>}</td>
                           <td className="max-w-[16ch] truncate px-3 py-2 text-xs" title={r.filename}>
                             {r.filename || <span className="text-fg-faint">-</span>}
+                          </td>
+                          <td className="max-w-[24ch] truncate px-3 py-2 text-xs text-fg-muted" title={r.content || undefined}>
+                            {r.content || <span className="text-fg-faint">-</span>}
                           </td>
                           <td className="tabular px-3 py-2 font-mono text-xs">{r.tokens_scored}</td>
                           <td className="tabular px-3 py-2 font-mono text-xs">{fmt.pct100(r.green_pct)}</td>
@@ -332,6 +349,7 @@ function RecordDrawer({ row, onClose, onChanged }: { row: HistoryRow; onClose: (
               ["time", row.timestamp],
               ["source", row.source],
               ["mode", row.mode || "-"],
+              ["model", row.model || "-"],
               ["tokens scored", row.tokens_scored],
               ["green %", fmt.pct100(row.green_pct)],
               ["z", fmt.z(row.z_score)],
@@ -349,6 +367,12 @@ function RecordDrawer({ row, onClose, onChanged }: { row: HistoryRow; onClose: (
         </dl>
         <div className="mt-3">
           <VerdictBadge label={row.result} />
+        </div>
+        <div className="mt-4 space-y-1.5">
+          <h3 className="text-xs font-medium text-fg-faint">Analyzed text</h3>
+          <p className="max-h-48 overflow-y-auto whitespace-pre-wrap rounded-[var(--radius-surface)] border border-line bg-bg-muted p-3 text-xs leading-relaxed">
+            {row.content || <span className="text-fg-faint">No text stored for this record.</span>}
+          </p>
         </div>
         <div className="mt-6 space-y-4">
           <div className="space-y-1.5">

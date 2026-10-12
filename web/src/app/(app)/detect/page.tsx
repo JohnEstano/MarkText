@@ -4,12 +4,14 @@ import { useRef, useState } from "react";
 import { UploadSimple } from "@phosphor-icons/react";
 import { api, type Detection } from "@/lib/api";
 import { fmt } from "@/lib/format";
-import { Button, Label, Textarea, Help, FieldError, Panel, Notice, Skeleton, Metric } from "@/components/ui";
+import { Button, Label, Select, Textarea, Help, FieldError, Panel, Notice, Skeleton, Metric } from "@/components/ui";
 import { VerdictBadge, ZMeter } from "@/components/verdict";
-import { useHealth } from "@/components/status";
+import { useHealth, useModels } from "@/components/status";
 
 export default function DetectPage() {
   const { health } = useHealth();
+  const catalog = useModels();
+  const [model, setModel] = useState<string | null>(null);
   const [text, setText] = useState("");
   const [loaded, setLoaded] = useState<{ name: string; text: string; sidecar?: Record<string, unknown> } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -55,6 +57,7 @@ export default function DetectPage() {
     const extra = unchanged && loaded?.sidecar
       ? {
           mode: loaded.sidecar.mode ?? "",
+          model: loaded.sidecar.model ?? "",
           seed: loaded.sidecar.seed ?? "",
           max_new_tokens: loaded.sidecar.max_new_tokens ?? "",
           gen_tokens: loaded.sidecar.new_tokens ?? "",
@@ -67,6 +70,7 @@ export default function DetectPage() {
           filename: unchanged ? loaded!.name : "",
           source: unchanged ? "file" : "manual",
           extra,
+          model,
         }),
       );
     } catch (err) {
@@ -94,6 +98,19 @@ export default function DetectPage() {
           Re-score a text against this installation&apos;s key. Every analysis is logged with its run id.
         </p>
         <div className="mt-6 space-y-5">
+          {catalog && catalog.models.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="model">Score against</Label>
+              <Select id="model" value={model ?? catalog.default} onChange={(e) => setModel(e.target.value)}>
+                {catalog.models.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.label} — key {m.key_id ?? "?"}
+                  </option>
+                ))}
+              </Select>
+              <Help>Each model has its own watermark key; score with the model that made the text.</Help>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="file">Open a .txt (optionally with its .json sidecar)</Label>
             <input
@@ -109,7 +126,7 @@ export default function DetectPage() {
               <Help>
                 <UploadSimple size={12} className="mr-1 inline" />
                 {loaded.name}
-                {loaded.sidecar ? ` (${String(loaded.sidecar.mode)} mode, seed ${String(loaded.sidecar.seed)})` : ""}
+                {loaded.sidecar ? ` (${String(loaded.sidecar.mode)} mode${loaded.sidecar.model ? `, model ${String(loaded.sidecar.model)}` : ""}, seed ${String(loaded.sidecar.seed)})` : ""}
               </Help>
             )}
           </div>
@@ -152,6 +169,7 @@ export default function DetectPage() {
                 <VerdictBadge label={result.label} className="text-sm" />
                 <span className="tabular font-mono text-xs text-fg-faint">run {result.run_id ?? "not logged"}</span>
               </div>
+              <p className="text-xs text-fg-muted">Scored with model {result.model}.</p>
               <ZMeter z={result.z_score} detection={th.detection} possible={th.possible} />
               <div className="grid grid-cols-2 gap-x-4 gap-y-5">
                 <Metric label="Tokens analyzed" value={fmt.int(result.num_tokens_scored)} />

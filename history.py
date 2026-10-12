@@ -55,6 +55,8 @@ COLUMNS = [
     "repeated",        # scored positions whose n-gram came earlier (counted once)
     "passage_z",       # z of the strongest 150-token passage, when the text is longer
     "passage_p",       # its p-value, Bonferroni-corrected for the windows tried
+    "model",           # catalog short name of the model that made (or scored) the text
+    "content",         # the analyzed text itself (tables show a preview)
 ]
 
 # the layout used before run_id existed; recognised for migration
@@ -158,11 +160,13 @@ def new_run_id():
     return uuid.uuid4().hex[:8]
 
 
-def append_history(stats, source="manual", filename="", extra=None):
+def append_history(stats, source="manual", filename="", extra=None, text=""):
     """Append one row and return its run_id. `stats` is Engine.detect()'s
-    dict; `extra` may carry mode, batch_id, max_new_tokens, seed, gen_tokens,
-    note. Raises OSError if the file cannot be written (for example while
-    it is open in Excel); callers report that."""
+    dict; `extra` may carry mode, model, batch_id, max_new_tokens, seed,
+    gen_tokens, note; `text` is the analyzed text itself, stored in the
+    content column. The model falls back to stats["model"] (the engine that
+    scored) when extra names none. Raises OSError if the file cannot be
+    written (for example while it is open in Excel); callers report that."""
     ensure_history()
     if source not in SOURCES:
         raise ValueError("source must be one of {}".format(SOURCES))
@@ -194,6 +198,8 @@ def append_history(stats, source="manual", filename="", extra=None):
         "repeated": stats.get("repeated", ""),
         "passage_z": round(passage["z"], 2) if passage else "",
         "passage_p": "{:.3e}".format(passage["p"]) if passage else "",
+        "model": extra.get("model", stats.get("model", "")),
+        "content": text or "",
     }
     with locks.lock_for(HISTORY_PATH):
         with open(HISTORY_PATH, "a", newline="", encoding="utf-8") as f:

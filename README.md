@@ -99,6 +99,12 @@ The key never leaves the config file: generation results, sidecars, reports and 
 
 If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one and keeps the old one under `watermark.retired_keys`. An assistant draft is always scored with the key its sidecar names, so drafts made before the rotation are still recognised; texts typed or uploaded by people are scored with the current key.
 
+## Models
+
+Generation can pick from several open models, not just one: Qwen2.5 0.5B and 1.5B, SmolLM2 135M, 360M and 1.7B, and TinyLlama 1.1B Chat (all Apache-2.0, none gated). Nothing downloads until it is chosen — each model loads (and fetches from Hugging Face) only on first use, which is why the first generation with a new model takes a while and later ones start fast.
+
+Every model watermarks with its own private key (`models.<name>.watermark` in the config), so a score names the model that made a text: the Generate page shows it under each output, Detect names the model it scored with, and every history row records it in its `model` column alongside the analyzed text itself (`content`). Scoring needs only a model's tokenizer (megabytes), never its weights, so Detect can check against a model that was never loaded for writing. Batches (`python experiment.py --model smol360 ...`, or the model picker on the Experiment page) record their model in the batch settings and in every row, and `classroom.cli rotate-key --model <name>` rotates one model's key without touching the others.
+
 ## Files
 
 | File | Type | Owner | Purpose |
@@ -115,7 +121,7 @@ If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one
 | `data/audit.csv` | CSV | `classroom/audit.py` | The activity log: one appended row per change (sign-ins, hand-ins, scores, decisions, exports, restores); never rewritten |
 | `data/reports/*.csv`, `*.zip` | CSV, ZIP | `classroom/reports.py`, `classes.py`, `archive.py`, `audit.py`, `integrity.py` | Exported assignment tables, class summaries, rosters, activity, file-check findings, and whole classes as zip files |
 | `data/backups/*` | copies | `classroom/store.py`, `backups.py` | A copy of any JSON or CSV file taken before it is rewritten (the newest 30 per file); restorable from the Records page |
-| `logs/detection_history.csv` | CSV | `history.py` | One row per detection, lab or classroom, with a unique `run_id` |
+| `logs/detection_history.csv` | CSV | `history.py` | One row per detection, lab or classroom, with a unique `run_id`, the `model` that made or scored the text, and the analyzed text in `content` |
 | `logs/exports/*` | CSV, JSON | `history.py`, `experiment.py`, `ui/lab.py` | Lab exports, batch settings and summaries, history backups |
 | `generated/{normal,watermarked}/*.txt` + `.json` | TXT + JSON | `ui/lab.py`, `main.py` | Lab generations and their sidecars |
 | `prompts/experiment_prompts.txt` | TXT | `experiment.py` | 100 prompts for the batch experiment |

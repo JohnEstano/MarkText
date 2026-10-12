@@ -35,6 +35,7 @@ with st.container(border=True):
                              key="exp_lengths")
     runs = x3.number_input("Runs per cell", 1, 5, 1, key="exp_runs")
     seed_base = x4.number_input("Seed base", 0, 10_000_000, 100, key="exp_seed")
+    exp_model = common.pick_model(config, key="exp_model")
     known = experiment.known_batches()
     resume = st.selectbox("Resume an existing batch (finished cells are skipped)",
                           ["(new batch)"] + ["{} ({} rows)".format(b, n) for b, n in sorted(known.items())],
@@ -44,8 +45,8 @@ with st.container(border=True):
     st.caption("{} generations, roughly {:.0f} min on this CPU. For runs over an hour use the command "
                "line, which can be interrupted and resumed:".format(total, est_s / 60))
     # the same batch as this page would run: without --prompts the command line uses all of them
-    command = "python experiment.py --prompts {} --lengths {} --runs {} --seed {}".format(
-        int(n_prompts), " ".join(str(L) for L in lengths), int(runs), int(seed_base))
+    command = "python experiment.py --model {} --prompts {} --lengths {} --runs {} --seed {}".format(
+        exp_model, int(n_prompts), " ".join(str(L) for L in lengths), int(runs), int(seed_base))
     if resume != "(new batch)":
         command += " --resume {}".format(resume.split(" (")[0])
     st.code(command, language="bash")
@@ -53,7 +54,7 @@ with st.container(border=True):
                       disabled=not lengths or not all_prompts, key="exp_run")
 
 if start:
-    engine, lock = common.engine()
+    engine, lock = common.engine(exp_model)
     st.button("Stop after the current generation", icon=":material/stop_circle:", key="exp_stop",
               help="Any click during a run stops it after the generation in progress; finished "
                    "cells stay logged and the batch can be resumed.")
@@ -95,8 +96,9 @@ with st.container(border=True):
         summary = experiment.summarise_batch(bdf, config)
         try:
             settings = experiment.read_settings(show)
-            st.caption("Created {}; prompt file hash {}; seed base {}; lengths {}.".format(
-                settings.get("created"), settings.get("prompt_file_hash"), settings.get("seed_base"),
+            st.caption("Created {}; model {}; prompt file hash {}; seed base {}; lengths {}.".format(
+                settings.get("created"), settings.get("model", "?"),
+                settings.get("prompt_file_hash"), settings.get("seed_base"),
                 settings.get("lengths")))
         except (OSError, ValueError):
             st.caption("No settings file for this batch.")

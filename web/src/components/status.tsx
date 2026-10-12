@@ -1,8 +1,19 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, type Health } from "@/lib/api";
+import { api, type Health, type ModelOption } from "@/lib/api";
 import { Notice } from "@/components/ui";
+
+/* The model catalog for the model dropdowns (each model watermarks with
+   its own key). Falls back to null when the API is unreachable; pages hide
+   the dropdown then and the server uses its default model. */
+export function useModels() {
+  const [catalog, setCatalog] = useState<{ default: string; models: ModelOption[] } | null>(null);
+  useEffect(() => {
+    api.models().then(setCatalog).catch(() => setCatalog(null));
+  }, []);
+  return catalog;
+}
 
 /* Reads /health once per page so every app screen can say, before the user
    types anything, whether the model is up and whether the key is public. */

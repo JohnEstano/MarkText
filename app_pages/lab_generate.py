@@ -12,6 +12,7 @@ config = common.load_config()
 st.title("Generate", anchor=False)
 st.caption("The same prompt, with or without the green-list bias. Saved texts keep their seed "
            "and parameters in a sidecar file.")
+model = common.pick_model(config)
 
 with st.form("generate_form"):
     prompt = st.text_area("Prompt", height=140, value="Tell me about the history of cryptography.",
@@ -31,7 +32,7 @@ if submitted:
         st.error("Write a prompt first.", icon=":material/error:")
     else:
         mode = (mode_label or "Watermarked").lower()
-        engine, lock = common.engine()
+        engine, lock = common.engine(model)
         seconds = int(max_tok) / 4.3
 
         def generate(text=prompt.strip(), tokens=int(max_tok), marked=(mode == "watermarked")):
@@ -61,8 +62,9 @@ if state["gen_text"]:
             st.badge(state["gen_mode"].capitalize(),
                      color="green" if state["gen_mode"] == "watermarked" else "gray")
         st.code(state["gen_text"], language=None, wrap_lines=True)
-        st.caption("{:,} words, {} tokens, seed {}".format(
-            len(state["gen_text"].split()), info.get("new_tokens", "?"), info.get("seed", "?")))
+        st.caption("{:,} words, {} tokens, seed {}, model {}".format(
+            len(state["gen_text"].split()), info.get("new_tokens", "?"), info.get("seed", "?"),
+            info.get("model", "?")))
         st.download_button("Save as .txt", data=state["gen_text"].encode("utf-8"),
                            file_name=lab.default_filename(state["gen_mode"]), mime="text/plain",
                            on_click=lab.on_save, icon=":material/download:", key="gen_save",

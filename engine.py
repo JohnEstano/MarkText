@@ -52,9 +52,17 @@ class _CancelCriteria(StoppingCriteria):
 
 
 class Engine:
-    def __init__(self, config, progress_callback=None):
-        self.config = config
-        self.device = _resolve_device(config.get("device", "auto"))
+    model_name = ""          # the catalog short name; __init__ always sets it
+
+    def __init__(self, config, model=None, progress_callback=None):
+        """One loaded model. `model` is a catalog short name (config.models);
+        None means the default model. Only the chosen model downloads: the
+        weights fetch happens in this constructor, so construct one Engine
+        per selected model and keep it."""
+        name = model or cfg.default_model_name(config)
+        self.model_name = name
+        self.config = cfg.config_for_model(config, name)
+        self.device = _resolve_device(self.config.get("device", "auto"))
 
         if progress_callback:
             progress_callback("Loading tokenizer...")
@@ -95,7 +103,9 @@ class Engine:
         """Adopt an edited config (a new key, other thresholds or sampling
         settings) without reloading the model. Returns False, changing
         nothing, when the model or the device changed: that needs a new
-        Engine. The caller holds the engine's lock."""
+        Engine (one Engine holds one model). `config` must already be
+        resolved for this engine's model (config_for_model). The caller
+        holds the engine's lock."""
         if (config["model_id"] != self.config["model_id"]
                 or _resolve_device(config.get("device", "auto")) != self.device):
             return False
@@ -143,6 +153,7 @@ class Engine:
         return {
             "text": self.tokenizer.decode(new_tokens, skip_special_tokens=True),
             "mode": "watermarked" if watermarked else "normal",
+            "model": self.model_name,
             "watermarked": bool(watermarked),
             "cancelled": bool(cancel_event is not None and cancel_event.is_set()),
             "seed": int(seed),
@@ -162,5 +173,9 @@ class Engine:
     def detect(self, text):
         """Score a text. Returns None when it is too short to score at all,
         otherwise a dict of statistics plus the verdict `label` (see
-        scorer.py for every step)."""
-        return self.scorer.detect(text)
+        scorer.py for every step). The stats name this engine's model, so a
+        logged row says which model scored it."""
+        stats = self.scorer.detect(text)
+        if stats is not None:
+            stats["model"] = self.model_name
+        return stats

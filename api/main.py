@@ -2,11 +2,12 @@
 
 Run with:  uvicorn api.main:app --reload --port 8000
 
-The model is loaded once at startup and shared behind a lock, the same rule
-the Streamlit app follows. Every route delegates to the root modules
-(engine, history, experiment, config); nothing here classifies or scores.
-Authentication is a placeholder: `principal()` returns None until accounts
-exist, so routes will not need to change when they do.
+One engine per model, each loaded (and downloaded) on first use and shared
+behind a lock, the same rule the Streamlit app follows. Every route
+delegates to the root modules (engine, history, experiment, config);
+nothing here classifies or scores. Authentication is a placeholder:
+`principal()` returns None until accounts exist, so routes will not need
+to change when they do.
 """
 
 import datetime
@@ -32,8 +33,8 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 GENERATED_DIR = BASE_DIR / "generated"
 README_PATH = BASE_DIR / "README.md"
 
-state = {"engine": None, "lock": threading.Lock(), "config": None, "notes": [],
-         "job": BatchJob(), "load_error": None}
+state = {"engine": None, "engines": {}, "lock": threading.Lock(), "config": None,
+         "notes": [], "job": BatchJob(), "load_error": None}
 
 
 def principal():
@@ -48,15 +49,32 @@ def load_engine():
     if os.environ.get("MARKTEXT_SKIP_MODEL") == "1":      # tests inject a fake engine
         return
     try:
-        state["engine"] = Engine(config)
+        state["engine"] = engine_for_model(None)
     except Exception as exc:
         state["load_error"] = str(exc)
 
 
-def engine_or_503():
+def engine_for_model(model):
+    """The engine for one catalog model (None: the default), loading and
+    downloading it on first use. One engine per model, shared by requests.
+    The startup engine (or a test's injected one) serves default requests."""
+    config = state["config"] or cfg.load_config()
+    try:
+        name = model or cfg.default_model_name(config)
+        resolved = cfg.config_for_model(config, name)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    if name == cfg.default_model_name(config) and state["engine"] is not None:
+        return state["engine"]
+    if name not in state["engines"]:
+        try:
+            with state["lock"]:
+                state["engines"][name] = Engine(resolved, model=name)
+        except Exception as exc:
+            raise HTTPException(503, "Model {} could not load: {}".format(name, exc))
     if state["engine"] is None:
-        raise HTTPException(503, state["load_error"] or "Model not loaded")
-    return state["engine"]
+        state["engine"] = state["engines"][name]
+    return state["engines"][name]
 
 
 app = FastAPI(title="MarkText API", version="1.0.0", on_startup=[load_engine])
@@ -69,9 +87,7 @@ app.add_middleware(
 
 
 def redacted_config(config):
-    shown = json.loads(json.dumps(config))
-    shown["watermark"]["hashing_key"] = "(hidden)"
-    return shown
+    return json.loads(json.dumps(cfg.redacted(config)))
 
 
 # ------------------------------------------------------------------ meta
@@ -110,10 +126,17 @@ def prompts():
     return {"count": len(items), "path": str(experiment.PROMPT_FILE), "prompts": items}
 
 
+# ---------------------------------------------------------------- models
+@app.get("/models")
+def list_models(who=Depends(principal)):
+    config = state["config"] or cfg.load_config()
+    return {"default": cfg.default_model_name(config), "models": cfg.public_models(config)}
+
+
 # -------------------------------------------------------------- generate
 @app.post("/generate")
 def generate(req: schemas.GenerateRequest, who=Depends(principal)):
-    engine = engine_or_503()
+    engine = engine_for_model(req.model)
     with state["lock"]:
         return engine.generate(req.prompt.strip(), max_new_tokens=req.max_new_tokens,
                                watermarked=(req.mode == "watermarked"), seed=req.seed)
@@ -145,7 +168,7 @@ def save_generation(req: schemas.SaveRequest, who=Depends(principal)):
 # ---------------------------------------------------------------- detect
 @app.post("/detect")
 def detect(req: schemas.DetectRequest, who=Depends(principal)):
-    engine = engine_or_503()
+    engine = engine_for_model(req.model)
     text = req.text.strip()
     with state["lock"]:
         stats = engine.detect(text)
@@ -154,8 +177,10 @@ def detect(req: schemas.DetectRequest, who=Depends(principal)):
                             .format(engine.min_tokens))
     logged, log_error = None, None
     try:
+        extra = dict(req.extra)
+        extra.setdefault("model", getattr(engine, "model_name", ""))
         logged = history.append_history(stats, source=req.source, filename=req.filename,
-                                        extra=req.extra)
+                                        extra=extra, text=text)
     except OSError as exc:
         log_error = str(exc)
     return {**stats, "run_id": logged, "log_error": log_error}
@@ -169,14 +194,16 @@ def history_frame():
     except pd.errors.EmptyDataError:
         df = pd.DataFrame(columns=history.COLUMNS)
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-    for c in ("filename", "mode", "batch_id", "source", "note", "seeding_scheme", "run_id"):
+    for c in ("filename", "mode", "model", "batch_id", "source", "note", "seeding_scheme",
+              "run_id", "content"):
         df[c] = df[c].fillna("").astype(str)
     for c in ("tokens_scored", "green_tokens", "green_pct", "z_score", "p_value", "max_new_tokens", "seed", "gen_tokens"):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     return df
 
 
-def apply_filters(df, result, source, batch_id, q, date_from, date_to, min_tokens):
+def apply_filters(df, result, source, batch_id, q, date_from, date_to, min_tokens,
+                  model=None):
     mask = pd.Series(True, index=df.index)
     if result:
         mask &= df["result"].isin(result)
@@ -184,6 +211,8 @@ def apply_filters(df, result, source, batch_id, q, date_from, date_to, min_token
         mask &= df["source"].isin(source)
     if batch_id:
         mask &= df["batch_id"] == batch_id
+    if model:
+        mask &= df["model"].isin(model)
     if q:
         mask &= df["filename"].str.contains(q, case=False, na=False)
     if date_from:
@@ -215,12 +244,14 @@ def frame_records(df):
 def get_history(result: list[str] | None = Query(None), source: list[str] | None = Query(None),
                 batch_id: str | None = None, q: str | None = None,
                 date_from: str | None = None, date_to: str | None = None,
-                min_tokens: int = 0, limit: int = 500, who=Depends(principal)):
+                min_tokens: int = 0, limit: int = 500,
+                model: list[str] | None = Query(None), who=Depends(principal)):
     try:
         df = history_frame()
     except (OSError, ValueError) as exc:
         raise HTTPException(500, "Could not read the history CSV: {}".format(exc))
-    filtered = apply_filters(df, result, source, batch_id, q, date_from, date_to, min_tokens)
+    filtered = apply_filters(df, result, source, batch_id, q, date_from, date_to, min_tokens,
+                             model)
     has_modes = (filtered["mode"] != "").any() if not filtered.empty else False
     config = state["config"] or cfg.load_config()
     kpis = {
@@ -237,7 +268,8 @@ def get_history(result: list[str] | None = Query(None), source: list[str] | None
         "rows": frame_records(rows),
         "options": {"results": sorted(df["result"].unique().tolist()),
                     "sources": sorted(df["source"].unique().tolist()),
-                    "batches": sorted(b for b in df["batch_id"].unique().tolist() if b)},
+                    "batches": sorted(b for b in df["batch_id"].unique().tolist() if b),
+                    "models": sorted(m for m in df["model"].unique().tolist() if m)},
         "thresholds": {k: config[k] for k in ("detection_threshold", "possible_threshold",
                                               "min_tokens_for_verdict")},
     }
@@ -309,8 +341,8 @@ def batch_payload(batch_id):
         settings = None
     return {"batch_id": batch_id, "rows": int(len(df)), "settings": settings,
             "summary": json.loads(summary.to_json(orient="records")),
-            "points": json.loads(df[["run_id", "mode", "max_new_tokens", "tokens_scored",
-                                     "z_score", "result"]].to_json(orient="records"))}
+            "points": json.loads(df[["run_id", "mode", "model", "max_new_tokens",
+                                     "tokens_scored", "z_score", "result"]].to_json(orient="records"))}
 
 
 @app.get("/experiments")
@@ -328,7 +360,7 @@ def list_experiments(who=Depends(principal)):
 
 @app.post("/experiments", status_code=202)
 def start_experiment(req: schemas.ExperimentRequest, who=Depends(principal)):
-    engine = engine_or_503()
+    engine = engine_for_model(req.model)
     try:
         prompts_list = experiment.load_prompts(limit=req.n_prompts)
     except OSError as exc:

@@ -6,15 +6,18 @@ import { api, type BatchDetail, type JobState } from "@/lib/api";
 import { estimateSeconds, fmt } from "@/lib/format";
 import { Button, Input, Label, Select, Help, FieldError, Panel, Notice, Skeleton, Empty, buttonClass } from "@/components/ui";
 import { ZChart } from "@/components/history-chart";
+import { useModels } from "@/components/status";
 
 const LENGTHS = [50, 150, 300, 500];
 
 export default function ExperimentsPage() {
+  const catalog = useModels();
   const [promptCount, setPromptCount] = useState<number | null>(null);
   const [nPrompts, setNPrompts] = useState(100);
   const [lengths, setLengths] = useState<number[]>([150]);
   const [runs, setRuns] = useState(1);
   const [seed, setSeed] = useState(100);
+  const [model, setModel] = useState<string | null>(null);
   const [resume, setResume] = useState("");
   const [batches, setBatches] = useState<Array<{ batch_id: string; rows: number; settings: Record<string, unknown> | null }>>([]);
   const [job, setJob] = useState<JobState | null>(null);
@@ -73,7 +76,7 @@ export default function ExperimentsPage() {
     if (!lengths.length) return setError("Choose at least one length.");
     setBusy(true);
     try {
-      const j = await api.startExperiment({ n_prompts: nPrompts, lengths, runs, seed_base: seed, resume: resume || null });
+      const j = await api.startExperiment({ n_prompts: nPrompts, lengths, runs, seed_base: seed, resume: resume || null, model });
       setJob(j);
       if (j.batch_id) setSelected(j.batch_id);
     } catch (err) {
@@ -131,6 +134,18 @@ export default function ExperimentsPage() {
                 ))}
               </Select>
             </div>
+            {catalog && catalog.models.length > 1 && (
+              <div className="space-y-1.5">
+                <Label htmlFor="x-model">Model</Label>
+                <Select id="x-model" value={model ?? catalog.default} onChange={(e) => setModel(e.target.value)}>
+                  {catalog.models.map((m) => (
+                    <option key={m.name} value={m.name}>
+                      {m.label} — {m.approx_size}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
           </div>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Lengths (max tokens)</legend>
@@ -153,7 +168,7 @@ export default function ExperimentsPage() {
           </fieldset>
           <Help>
             {fmt.int(total)} generations, roughly {fmt.minutes(eta)} on a CPU. For anything over an hour use the command
-            line, which can be interrupted and resumed: <code className="font-mono">python experiment.py --lengths {lengths.join(" ")} --runs {runs} --seed {seed}</code>
+            line, which can be interrupted and resumed: <code className="font-mono">python experiment.py --model {model ?? catalog?.default ?? "…"} --lengths {lengths.join(" ")} --runs {runs} --seed {seed}</code>
           </Help>
           <FieldError>{error && !job?.running ? null : null}</FieldError>
           <div className="flex gap-2">
@@ -222,7 +237,7 @@ export default function ExperimentsPage() {
           <>
             {detail.settings && (
               <p className="text-xs text-fg-faint">
-                {detail.rows} rows · created {String(detail.settings.created)} · prompt file hash {String(detail.settings.prompt_file_hash)} · seed base{" "}
+                {detail.rows} rows · model {String(detail.settings.model ?? "?")} · created {String(detail.settings.created)} · prompt file hash {String(detail.settings.prompt_file_hash)} · seed base{" "}
                 {String(detail.settings.seed_base)} · lengths {JSON.stringify(detail.settings.lengths)}
               </p>
             )}

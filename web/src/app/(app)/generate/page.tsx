@@ -4,16 +4,18 @@ import { useState } from "react";
 import { DownloadSimple, FloppyDisk, Copy } from "@phosphor-icons/react";
 import { api, type Generation, type Mode } from "@/lib/api";
 import { fmt } from "@/lib/format";
-import { Button, Input, Label, Textarea, Help, FieldError, Panel, Notice, Skeleton, Badge } from "@/components/ui";
-import { ModelLine } from "@/components/status";
+import { Button, Input, Label, Select, Textarea, Help, FieldError, Panel, Notice, Skeleton, Badge } from "@/components/ui";
+import { ModelLine, useModels } from "@/components/status";
 
 const MIN = 50;
 const MAX = 2000;
 
 export default function GeneratePage() {
+  const catalog = useModels();
   const [prompt, setPrompt] = useState("Tell me about the history of cryptography.");
   const [tokens, setTokens] = useState(150);
   const [mode, setMode] = useState<Mode>("watermarked");
+  const [model, setModel] = useState<string | null>(null);
   const [seed, setSeed] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,7 +37,7 @@ export default function GeneratePage() {
     setSaved(null);
     setSaveError(null);
     try {
-      setResult(await api.generate({ prompt: prompt.trim(), max_new_tokens: tokens, mode, seed: seed ? Number(seed) : null }));
+      setResult(await api.generate({ prompt: prompt.trim(), max_new_tokens: tokens, mode, seed: seed ? Number(seed) : null, model }));
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -79,6 +81,19 @@ export default function GeneratePage() {
         </p>
         <ModelLine />
         <form onSubmit={run} className="mt-6 space-y-5">
+          {catalog && catalog.models.length > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="model">Model</Label>
+              <Select id="model" value={model ?? catalog.default} onChange={(e) => setModel(e.target.value)}>
+                {catalog.models.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.label} — {m.approx_size}
+                  </option>
+                ))}
+              </Select>
+              <Help>Each model watermarks with its own key; only the chosen model downloads.</Help>
+            </div>
+          )}
           <div className="space-y-2">
             <Label htmlFor="prompt">Prompt</Label>
             <Textarea id="prompt" rows={5} value={prompt} onChange={(e) => setPrompt(e.target.value)} />
@@ -152,7 +167,7 @@ export default function GeneratePage() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone={result.mode === "watermarked" ? "accent" : "neutral"}>{result.mode}</Badge>
               <span className="tabular font-mono text-xs text-fg-muted">
-                seed {result.seed} · {result.new_tokens} tokens
+                seed {result.seed} · {result.new_tokens} tokens · model {result.model}
                 {result.cancelled ? " · cancelled" : ""}
               </span>
             </div>

@@ -80,7 +80,8 @@ def load_history_df():
         df = pd.read_csv(history.HISTORY_PATH, parse_dates=["timestamp"], encoding="utf-8-sig")
     except pd.errors.EmptyDataError:
         return pd.DataFrame(columns=history.COLUMNS)
-    for c in ("filename", "mode", "batch_id", "source", "note", "seeding_scheme"):
+    for c in ("filename", "mode", "model", "batch_id", "source", "note", "seeding_scheme",
+              "content"):
         df[c] = df[c].fillna("").astype(str)
     df["run_id"] = df["run_id"].astype(str)
     return df

@@ -17,9 +17,10 @@ for writing before the detector runs (a CSV open in Excel stops the work
 there), and if the review row still cannot be written, the history row
 just added is taken out again.
 
-The engine is a parameter. A later version with several models or keys
-passes another engine, and each review records which one scored the text
-(model_id, key_id).
+The engine is a parameter. Callers with several models or keys pass the
+engine for the submission (detect_many's pick), and each review records
+which one scored the text (model_id, key_id); the history row names the
+catalog model too.
 """
 
 import json
@@ -59,9 +60,11 @@ def detect_submission(engine, lock, submission, detected_by):
     if stats is None:                         # too short to score at all
         stats = verdict.placeholder_stats(engine.config, engine.device)
     with store.file_errors(history.HISTORY_PATH, "write to"):
+        extra = _history_extra(submission)
+        extra.setdefault("model", getattr(engine, "model_name", ""))
         run_id = history.append_history(stats, source="submission",
                                         filename="data/" + submission["text_path"],
-                                        extra=_history_extra(submission))
+                                        extra=extra, text=text)
     key_id = (stats.get("watermark") or {}).get("key_id") or ""
     try:
         review = reviews.record_detection(submission, stats, run_id,

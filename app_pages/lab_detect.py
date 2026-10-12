@@ -8,6 +8,7 @@ from ui import common, lab
 
 common.require_role("teacher")
 state = st.session_state
+config = common.load_config()
 
 
 def forget_result():
@@ -15,7 +16,8 @@ def forget_result():
     state["detect_stats"] = None
 
 st.title("Detect", anchor=False)
-st.caption("Score a text against this installation's key. Every score is logged.")
+st.caption("Score a text against one model's key. Every score is logged.")
+model = common.pick_model(config)
 col_in, col_out = st.columns([3, 2], gap="large")
 
 with col_in:
@@ -34,7 +36,7 @@ if analyze:
     if not text:
         col_in.error("Paste or open a text first.", icon=":material/error:")
     else:
-        engine, lock = common.scorer()           # the tokenizer is enough; no model
+        engine, lock = common.scorer(model)     # the tokenizer is enough; no weights
         try:
             with st.spinner("Scoring..."):
                 with lock:
@@ -50,7 +52,8 @@ if analyze:
                 unchanged = state["detect_filename"] and text == state["detect_loaded"]
                 try:
                     history.append_history(stats, source="file" if unchanged else "manual",
-                                           filename=state["detect_filename"] if unchanged else "")
+                                           filename=state["detect_filename"] if unchanged else "",
+                                           extra={"model": model}, text=text)
                 except OSError as exc:
                     col_in.error("Result shown but not logged: the history CSV could not be "
                                  "written (is it open in Excel?). {}".format(exc),
@@ -64,6 +67,9 @@ with col_out:
             st.caption("Nothing scored yet.")
         else:
             common.verdict_badge(stats["label"])
+            st.caption("Scored with model {} (key {}). Pick another model above when the text "
+                       "was made elsewhere.".format(stats.get("model", "?"),
+                                                    (stats.get("watermark") or {}).get("key_id", "?")))
             with st.container(horizontal=True):
                 st.metric("Tokens scored", stats["num_tokens_scored"], border=True)
                 st.metric("Green tokens", stats["num_green_tokens"], border=True)

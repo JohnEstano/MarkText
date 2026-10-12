@@ -23,8 +23,9 @@ class FakeEngine:
     device = "cpu"
     min_tokens = 6
 
-    def __init__(self, config=None, progress_callback=None):
+    def __init__(self, config=None, model=None, progress_callback=None):
         self.config = config or fake_config()
+        self.model_name = model or self.config.get("default_model", "")
         self.generated, self.detected = [], []
 
     def reconfigure(self, config):
@@ -38,6 +39,7 @@ class FakeEngine:
         self.generated.append((prompt, n, watermarked))
         return {"text": " ".join(["wm" if watermarked else "nm"] * n),
                 "mode": "watermarked" if watermarked else "normal",
+                "model": self.model_name,
                 "watermarked": bool(watermarked),
                 "cancelled": bool(cancel_event is not None and cancel_event.is_set()),
                 "seed": 42 if seed is None else int(seed), "max_new_tokens": n,
@@ -58,5 +60,5 @@ class FakeEngine:
                 "green_fraction": green, "z_score": z, "prediction": marked,
                 "p_value": 1e-9 if marked else 0.69, "confidence": 0.99,
                 "label": verdict.classify(z, scored, self.config), "input_tokens": len(words),
-                "repeated": 0, "passage": None,
+                "repeated": 0, "passage": None, "model": self.model_name,
                 "device": self.device, "watermark": cfg.public_watermark(self.config)}

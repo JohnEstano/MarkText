@@ -64,6 +64,12 @@ def write_sidecar(txt_path, info):
     return side
 
 
+def preview(text, limit=80):
+    """One-line preview of an analyzed text for table cells."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[:limit].rstrip() + "..."
+
+
 def read_sidecar(txt_path):
     side = txt_path.with_suffix(".json")
     if not side.exists():
@@ -91,11 +97,17 @@ class App(tk.Tk):
             messagebox.showerror("Configuration Error", str(exc))
             raise
 
-        # all cross-thread state exists from the start
-        self.engine = None
+        # all cross-thread state exists from the start; one engine per
+        # model, each downloading only when first chosen
+        self.engines = {}
+        self.engine = None                   # the engine of the current tab's model
         self.load_state = "loading"          # loading | ready | failed
         self.load_error = ""
+        self.load_model = ""
         self.progress_queue = queue.Queue()
+        self.model_names = cfg.model_names(self.settings)
+        self.model_labels = {n: cfg.model_label(self.settings, n) for n in self.model_names}
+        self.model_default = cfg.default_model_name(self.settings)
         self.gen_result = None               # dict from Engine.generate
         self.gen_error = ""
         self.gen_cancel = threading.Event()
@@ -184,7 +196,15 @@ class App(tk.Tk):
         ttk.Radiobutton(sf, text="Normal", variable=self.mode_var,
                         value="normal").pack(side="left", padx=4)
         ttk.Radiobutton(sf, text="Watermarked", variable=self.mode_var,
-                        value="watermarked").pack(side="left", padx=4)
+                        value="watermarked").pack(side="left", padx=(4, 14))
+
+        ttk.Label(sf, text="Model:").pack(side="left", padx=(0, 4))
+        self.gen_model_var = tk.StringVar(value=self.model_labels[self.model_default])
+        self.gen_model_box = ttk.Combobox(sf, textvariable=self.gen_model_var,
+                                          values=[self.model_labels[n] for n in self.model_names],
+                                          state="readonly", width=34)
+        self.gen_model_box.pack(side="left")
+        self.gen_model_box.bind("<<ComboboxSelected>>", self._on_gen_model)
 
         self.gen_btn = ttk.Button(sf, text="Generate", command=self._start_generate)
         self.gen_btn.pack(side="left", padx=(18, 0))
@@ -225,6 +245,13 @@ class App(tk.Tk):
         self.analyze_btn = ttk.Button(bf, text="Analyze", command=self._analyze)
         self.analyze_btn.pack(side="left", padx=4)
         ttk.Button(bf, text="Clear", command=self._clear_detect).pack(side="left", padx=4)
+        ttk.Label(bf, text="Model:").pack(side="left", padx=(12, 4))
+        self.det_model_var = tk.StringVar(value=self.model_labels[self.model_default])
+        self.det_model_box = ttk.Combobox(bf, textvariable=self.det_model_var,
+                                          values=[self.model_labels[n] for n in self.model_names],
+                                          state="readonly", width=34)
+        self.det_model_box.pack(side="left")
+        self.det_model_box.bind("<<ComboboxSelected>>", self._on_det_model)
         self.det_source_var = tk.StringVar(value="")
         ttk.Label(bf, textvariable=self.det_source_var,
                   foreground="#555").pack(side="left", padx=12)
@@ -296,13 +323,14 @@ class App(tk.Tk):
         tf = ttk.Frame(f)
         tf.grid(row=1, column=0, sticky="nsew", padx=12, pady=6)
 
-        cols = ("id", "time", "source", "file", "mode", "tokens", "green", "z", "p", "result")
+        cols = ("id", "time", "source", "file", "content", "mode", "model", "tokens",
+                "green", "z", "p", "result")
         self.tree = ttk.Treeview(tf, columns=cols, show="headings", height=18)
         hdr = {"id": "Run id", "time": "Date / Time", "source": "Source", "file": "Filename",
-               "mode": "Mode", "tokens": "Tokens", "green": "Green %", "z": "Z-score",
-               "p": "p-value", "result": "Result"}
-        wds = {"id": 80, "time": 140, "source": 70, "file": 170, "mode": 90, "tokens": 65,
-               "green": 70, "z": 65, "p": 80, "result": 180}
+               "content": "Analyzed text", "mode": "Mode", "model": "Model", "tokens": "Tokens",
+               "green": "Green %", "z": "Z-score", "p": "p-value", "result": "Result"}
+        wds = {"id": 80, "time": 140, "source": 70, "file": 140, "content": 200, "mode": 90,
+               "model": 80, "tokens": 65, "green": 70, "z": 65, "p": 80, "result": 180}
         for c in cols:
             self.tree.heading(c, text=hdr[c])
             self.tree.column(c, width=wds[c], anchor="w")
@@ -340,46 +368,78 @@ class App(tk.Tk):
         f.columnconfigure(0, weight=1)
 
     # =============================================================== ENGINE
-    def _load_engine_async(self):
-        self.set_status("Loading model (may download on first run)...")
-        t = threading.Thread(target=self._load_worker, daemon=True)
-        t.start()
-        self.after(300, self._poll_load, t)
+    def _model_name_of(self, var):
+        """Combobox label text back to the catalog short name."""
+        for name, label in self.model_labels.items():
+            if label == var.get():
+                return name
+        return self.model_default
 
-    def _load_worker(self):
+    def _on_gen_model(self, _event=None):
+        self._load_engine_async(self._model_name_of(self.gen_model_var))
+
+    def _on_det_model(self, _event=None):
+        self._load_engine_async(self._model_name_of(self.det_model_var))
+
+    def _load_engine_async(self, name=None):
+        name = name or self.model_default
+        if name in self.engines:
+            self.engine = self.engines[name]
+            self.load_state = "ready"
+            self.set_status("Ready — {} on {}".format(
+                self.engines[name].config["model_id"], self.engines[name].device))
+            return
+        self.load_state = "loading"
+        self.load_model = name
+        self.set_status("Loading {} (downloads on first use)...".format(self.model_labels[name]))
+        t = threading.Thread(target=self._load_worker, args=(name,), daemon=True)
+        t.start()
+        self.after(300, self._poll_load, t, name)
+
+    def _load_worker(self, name):
         # runs on the worker: no widget access, progress goes through the queue
         try:
-            self.engine = Engine(self.settings, progress_callback=self.progress_queue.put)
-            self.load_state = "ready"
+            self.engines[name] = Engine(self.settings, model=name,
+                                        progress_callback=self.progress_queue.put)
+            if self.load_model == name:
+                self.engine = self.engines[name]
+                self.load_state = "ready"
         except Exception as exc:
-            self.load_error = str(exc)
-            self.load_state = "failed"
+            if self.load_model == name:
+                self.load_error = str(exc)
+                self.load_state = "failed"
 
-    def _poll_load(self, t):
+    def _poll_load(self, t, name):
         while True:
             try:
                 self.set_status(self.progress_queue.get_nowait())
             except queue.Empty:
                 break
         if t.is_alive():
-            self.after(300, self._poll_load, t)
+            self.after(300, self._poll_load, t, name)
             return
-        if self.load_state == "ready":
+        if name in self.engines and self.load_model == name:
+            self.engine = self.engines[name]
+            self.load_state = "ready"
             self.set_status("Ready — {} on {}".format(
-                self.settings["model_id"], self.engine.device))
-        else:
+                self.engines[name].config["model_id"], self.engines[name].device))
+        elif self.load_model == name:
             messagebox.showerror("Model Error",
                                  "Failed to load the model:\n" + self.load_error)
             self.set_status("Model load failed")
 
-    def _engine_ready(self):
-        """Explain the engine's state to the user; True only when usable."""
-        if self.load_state == "ready":
+    def _engine_ready(self, name):
+        """Explain one model's engine state to the user; True only when usable."""
+        if name in self.engines:
+            self.engine = self.engines[name]
             return True
-        if self.load_state == "failed":
+        if self.load_state == "failed" and self.load_model == name:
             messagebox.showerror("No Model", "The model failed to load:\n" + self.load_error)
         else:
-            messagebox.showinfo("No Model", "The model is still loading. Please wait.")
+            if self.load_state != "loading" or self.load_model != name:
+                self._load_engine_async(name)
+            else:
+                messagebox.showinfo("No Model", "The model is still loading. Please wait.")
         return False
 
     # ============================================================ GENERATE
@@ -397,18 +457,20 @@ class App(tk.Tk):
                                  "Enter a whole number between {} and {}.".format(
                                      MIN_TOKENS, MAX_TOKENS))
             return
-        if not self._engine_ready():
+        name = self._model_name_of(self.gen_model_var)
+        if not self._engine_ready(name):
             return
 
         mode = self.mode_var.get()
+        engine = self.engines[name]
         self.gen_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
         self.gen_cancel.clear()
-        self.set_status("Generating{} text...".format(
-            " watermarked" if mode == "watermarked" else ""))
+        self.set_status("Generating{} text with {}...".format(
+            " watermarked" if mode == "watermarked" else "", self.model_labels[name]))
 
         t = threading.Thread(target=self._gen_worker,
-                             args=(prompt, max_tok, mode == "watermarked"),
+                             args=(engine, prompt, max_tok, mode == "watermarked"),
                              daemon=True)
         t.start()
         self.after(200, self._poll_gen, t)
@@ -417,9 +479,9 @@ class App(tk.Tk):
         self.gen_cancel.set()
         self.set_status("Cancelling after the current token...")
 
-    def _gen_worker(self, prompt, max_tok, watermarked):
+    def _gen_worker(self, engine, prompt, max_tok, watermarked):
         try:
-            self.gen_result = self.engine.generate(
+            self.gen_result = engine.generate(
                 prompt, max_new_tokens=max_tok, watermarked=watermarked,
                 cancel_event=self.gen_cancel)
             self.gen_error = ""
@@ -438,8 +500,9 @@ class App(tk.Tk):
             self.output_text.delete("1.0", "end")
             self.output_text.insert("1.0", info["text"])
             n = len(info["text"].split())
-            self.gen_status_var.set("{:,} words, {} mode, seed {}{}".format(
-                n, info["mode"], info["seed"], " (cancelled)" if info["cancelled"] else ""))
+            self.gen_status_var.set("{:,} words, {} mode, {}, seed {}{}".format(
+                n, info["mode"], info.get("model", "?"), info["seed"],
+                " (cancelled)" if info["cancelled"] else ""))
             self.set_status("Done" if not info["cancelled"] else "Generation cancelled")
         else:
             messagebox.showerror("Generation Error", self.gen_error)
@@ -522,18 +585,20 @@ class App(tk.Tk):
         if not text:
             messagebox.showerror("Empty Input", "Paste or open text to analyze.")
             return
-        if not self._engine_ready():
+        name = self._model_name_of(self.det_model_var)
+        if not self._engine_ready(name):
             return
 
+        engine = self.engines[name]
         self.analyze_btn.configure(state="disabled")
-        self.set_status("Analyzing...")
-        t = threading.Thread(target=self._det_worker, args=(text,), daemon=True)
+        self.set_status("Analyzing with {}...".format(self.model_labels[name]))
+        t = threading.Thread(target=self._det_worker, args=(engine, text,), daemon=True)
         t.start()
-        self.after(200, self._poll_detect, t, text)
+        self.after(200, self._poll_detect, t, text, engine)
 
-    def _det_worker(self, text):
+    def _det_worker(self, engine, text):
         try:
-            self.det_result = self.engine.detect(text)
+            self.det_result = engine.detect(text)
             self.det_too_short = self.det_result is None
             self.det_error = ""
         except Exception as exc:
@@ -541,9 +606,9 @@ class App(tk.Tk):
             self.det_too_short = False
             self.det_error = str(exc)
 
-    def _poll_detect(self, t, text):
+    def _poll_detect(self, t, text, engine):
         if t.is_alive():
-            self.after(200, self._poll_detect, t, text)
+            self.after(200, self._poll_detect, t, text, engine)
             return
         self.analyze_btn.configure(state="normal")
 
@@ -554,7 +619,7 @@ class App(tk.Tk):
         if self.det_too_short:
             messagebox.showerror("Too Short",
                                  "Text is too short for analysis. Need at least "
-                                 "{} tokens (a sentence or two).".format(self.engine.min_tokens))
+                                 "{} tokens (a sentence or two).".format(engine.min_tokens))
             self.set_status("Text too short")
             return
 
@@ -569,17 +634,19 @@ class App(tk.Tk):
 
         # the file name applies only while the box still holds that file's text
         unchanged = self.detect_filename and text == self.detect_loaded_text
-        extra = {}
+        extra = {"model": getattr(engine, "model_name", "")}
         if unchanged and self.detect_sidecar:
             side = self.detect_sidecar
-            extra = {"mode": side.get("mode", ""), "seed": side.get("seed", ""),
-                     "max_new_tokens": side.get("max_new_tokens", ""),
-                     "gen_tokens": side.get("new_tokens", "")}
+            extra.update(mode=side.get("mode", ""), seed=side.get("seed", ""),
+                         max_new_tokens=side.get("max_new_tokens", ""),
+                         gen_tokens=side.get("new_tokens", ""))
+            if side.get("model"):
+                extra["model"] = side["model"]
         try:
             history.append_history(stats,
                                    source="file" if unchanged else "manual",
                                    filename=self.detect_filename if unchanged else "",
-                                   extra=extra)
+                                   extra=extra, text=text)
         except OSError as exc:
             messagebox.showerror("History Not Saved",
                                  "The result is shown but could not be logged "
@@ -616,7 +683,9 @@ class App(tk.Tk):
                 row.get("timestamp", ""),
                 row.get("source", ""),
                 row.get("filename", ""),
+                preview(row.get("content", "")),
                 row.get("mode", ""),
+                row.get("model", ""),
                 row.get("tokens_scored", ""),
                 row.get("green_pct", ""),
                 row.get("z_score", ""),
