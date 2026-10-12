@@ -54,3 +54,22 @@ def scores_chart(points, detection, possible, height=300):
     possible_line = alt.Chart(pd.DataFrame({"z": [possible]})).mark_rule(
         strokeDash=[2, 4], color=colours[verdict.LABEL_POSSIBLE]).encode(y="z:Q")
     return (likely + possible_line + dots).properties(height=height)
+
+
+def model_chart(df, height=240):
+    """One stacked bar per model: how many of its scores were flagged,
+    possible, not AI writing, or inconclusive. Rows with no model land in
+    "Unknown", so old rows stay visible instead of vanishing."""
+    data = (df.assign(model=df["model"].fillna("").where(lambda s: s != "", "Unknown"),
+                      verdict=df["result"].map(lambda r: SHORT.get(r, r)))
+              .groupby(["model", "verdict"]).size().reset_index(name="analyses"))
+    colours = VERDICT_COLOURS[theme()]
+    domain = [SHORT[l] for l in verdict.LABELS]
+    return alt.Chart(data).mark_bar().encode(
+        x=alt.X("model:N", title="model"),
+        y=alt.Y("analyses:Q", title="scores"),
+        color=alt.Color("verdict:N", title=None,
+                        scale=alt.Scale(domain=domain, range=[colours[l] for l in verdict.LABELS]),
+                        legend=LEGEND),
+        tooltip=["model:N", "verdict:N", alt.Tooltip("analyses:Q", title="scores")],
+    ).properties(height=height).interactive()

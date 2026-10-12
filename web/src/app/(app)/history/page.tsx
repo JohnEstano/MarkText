@@ -6,7 +6,7 @@ import { api, type HistoryFilters, type HistoryResponse, type HistoryRow } from 
 import { fmt } from "@/lib/format";
 import { Button, Input, Label, Select, Panel, Notice, Skeleton, Metric, Empty, Badge, Pager, buttonClass } from "@/components/ui";
 import { VerdictBadge } from "@/components/verdict";
-import { ZChart } from "@/components/history-chart";
+import { ModelBars, ZChart } from "@/components/history-chart";
 
 export default function HistoryPage() {
   const [filters, setFilters] = useState<HistoryFilters>({});
@@ -182,6 +182,16 @@ export default function HistoryPage() {
                 </Panel>
                 <p className="mt-1 text-xs text-fg-faint">
                   Dashed line: detection threshold {th?.detection_threshold}. Verdicts below {th?.min_tokens_for_verdict} scored tokens are inconclusive.
+                </p>
+              </section>
+
+              <section>
+                <h2 className="mb-2 text-sm font-medium text-fg-muted">Models</h2>
+                <Panel className="p-3">
+                  <ModelBars rows={data.rows} />
+                </Panel>
+                <p className="mt-1 text-xs text-fg-faint">
+                  Which model each score names. Flagged means its key matched; the rest did not.
                 </p>
               </section>
 

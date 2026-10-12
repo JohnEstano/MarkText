@@ -1,7 +1,10 @@
 "use client";
 
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
+  Legend,
   ReferenceLine,
   ResponsiveContainer,
   Scatter,
@@ -75,6 +78,72 @@ export function ZChart({
             <Scatter key={g.label} name={g.label} data={g.data} fill={TONES[g.label]} fillOpacity={0.85} />
           ))}
         </ScatterChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+const MODEL_KEYS = ["Flagged", "Possible", "Not AI writing", "Inconclusive"] as const;
+const MODEL_FILLS: Record<(typeof MODEL_KEYS)[number], string> = {
+  Flagged: TONES["LIKELY MARKTEXT"],
+  Possible: TONES["POSSIBLE WATERMARK"],
+  "Not AI writing": TONES["NOT DETECTED"],
+  Inconclusive: TONES["INCONCLUSIVE (short text)"],
+};
+
+/* One stacked bar per model: which model each score names. Rows with no
+   model land in "Unknown" so old rows stay visible instead of vanishing. */
+export function ModelBars({
+  rows,
+  height = 260,
+}: {
+  rows: Array<{ model?: string; result: string }>;
+  height?: number;
+}) {
+  const models = [...new Set(rows.map((r) => r.model || "Unknown"))];
+  const data = models.map((model) => {
+    const own = rows.filter((r) => (r.model || "Unknown") === model);
+    const count = (label: string) => own.filter((r) => r.result === label).length;
+    return {
+      model,
+      Flagged: count("LIKELY MARKTEXT"),
+      Possible: count("POSSIBLE WATERMARK"),
+      "Not AI writing": count("NOT DETECTED"),
+      Inconclusive: own.length - count("LIKELY MARKTEXT") - count("POSSIBLE WATERMARK") - count("NOT DETECTED"),
+    };
+  });
+  return (
+    <div style={{ height }} className="w-full">
+      <ResponsiveContainer>
+        <BarChart data={data} margin={{ top: 12, right: 16, bottom: 12, left: 0 }}>
+          <CartesianGrid stroke="var(--line)" strokeDasharray="2 4" vertical={false} />
+          <XAxis
+            dataKey="model"
+            tick={{ fill: "var(--fg-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}
+            stroke="var(--line-strong)"
+            interval={0}
+          />
+          <YAxis
+            allowDecimals={false}
+            tick={{ fill: "var(--fg-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}
+            stroke="var(--line-strong)"
+            width={32}
+          />
+          <Tooltip
+            cursor={{ fill: "var(--bg-muted)" }}
+            contentStyle={{
+              background: "var(--bg-elev)",
+              border: "1px solid var(--line)",
+              borderRadius: 8,
+              fontSize: 12,
+              color: "var(--fg)",
+            }}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {MODEL_KEYS.map((k) => (
+            <Bar key={k} dataKey={k} stackId="models" fill={MODEL_FILLS[k]} />
+          ))}
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );

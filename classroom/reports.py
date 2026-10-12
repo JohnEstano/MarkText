@@ -18,7 +18,9 @@ REPORT_COLUMNS = ["username", "display_name", "state", "version", "submitted_at"
                   "words", "tokens_scored", "green_pct", "z_score", "label", "decision", "note",
                   "returned", "returned_at", "earlier_flag", "late", "points"]
 # old_count: scored before repeats counted once (reviews.counted_every_repeat)
-FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at", "old_count"]
+# model_id rides along for display only; the exported report keeps REPORT_COLUMNS
+FRAME_COLUMNS = REPORT_COLUMNS + ["submission_id", "review_id", "detected_at", "old_count",
+                                  "model_id"]
 SUMMARY_COLUMNS = ["assignment_id", "title", "due_at", "status", "students", "submitted",
                    "detected", "likely", "possible", "not_detected", "inconclusive", "accepted",
                    "flagged", "needs_review", "returned", "late", "mean_z", "points", "mean_points"]
@@ -56,7 +58,7 @@ def assignment_frame(assignment_id):
                         columns=reviews.COLUMNS)[
         ["submission_id", "review_id", "tokens_scored", "green_pct", "z_score", "label",
          "decision", "note", "returned", "returned_at", "detected_at", "returned_decision",
-         "returned_note", "points", "returned_points", "repeated"]]
+         "returned_note", "points", "returned_points", "repeated", "model_id"]]
 
     # a resubmission becomes the current version, but a flag on an earlier
     # version must not disappear with it

@@ -247,6 +247,7 @@ with st.container(border=True):
                                 key="review_filter_" + assignment_id, label_visibility="collapsed")
     visible = frame[frame["state"].isin(shown_states or [])].reset_index(drop=True)
     shown_users = list(visible["username"])
+    model_names = {m: cfg.model_display_for_id(thresholds, m) for m in visible["model_id"].unique() if m}
     view = pd.DataFrame({
         "Student": visible["display_name"],
         "Status": visible["state"].map(lambda s: [s]),
@@ -256,6 +257,7 @@ with st.container(border=True):
         "z": visible["z_score"],
         "Detector": [common.verdict_text(label) + (" (old count)" if old_count else "") if label else ""
                      for label, old_count in zip(visible["label"], visible["old_count"])],
+        "Model": visible["model_id"].map(lambda m: model_names.get(m, "")),
         "Decision": visible["decision"].map(lambda d: common.decision_text(d) if d != "pending" else ""),
         "Earlier flag": visible["earlier_flag"],
         "Late": visible["late"],
@@ -284,10 +286,13 @@ with st.container(border=True):
                            "Green %": st.column_config.ProgressColumn(
                                min_value=0, max_value=100, format="%.1f%%",
                                help="Share of green tokens; chance is 50%."),
-                           "z": st.column_config.NumberColumn(
-                               format="%.2f", width="small",
-                               help="How far the green share sits above chance, in standard errors."),
-                           "Earlier flag": st.column_config.CheckboxColumn(
+                            "z": st.column_config.NumberColumn(
+                                format="%.2f", width="small",
+                                help="How far the green share sits above chance, in standard errors."),
+                            "Model": st.column_config.TextColumn(
+                                width="small",
+                                help="The model the detector names, when any key matched."),
+                            "Earlier flag": st.column_config.CheckboxColumn(
                                width="small", help="An earlier version was flagged or scored as likely "
                                                    "MarkText before this one was handed in."),
                            "Late": st.column_config.CheckboxColumn(
@@ -395,6 +400,9 @@ with st.container(border=True):
             else:
                 rid = review["review_id"]
                 common.verdict_badge(review["label"])
+                plain = cfg.generated_by_text(thresholds, review["label"], review["model_id"])
+                if plain:
+                    st.markdown("**{}**".format(plain))
                 with st.container(horizontal=True):
                     st.metric("Tokens scored", review["tokens_scored"], border=True)
                     st.metric("Green share", "{}%".format(review["green_pct"]), border=True,
@@ -406,12 +414,14 @@ with st.container(border=True):
                                        float(thresholds["possible_threshold"]),
                                        float(thresholds["detection_threshold"]),
                                        thresholds["min_tokens_for_verdict"]))
-                for note in common.scoring_notes(review.get("repeated"),
-                                                 review.get("passage_z") if decisive else "",
-                                                 review.get("passage_p"), decisive):
-                    st.caption(note)
-                st.caption("Scored {} with {}, key {}.".format(
-                    common.when(review["detected_at"]), review["model_id"], review["key_id"] or "unknown"))
+                with st.expander("How this was checked"):
+                    st.caption("Checked {}.".format(common.when(review["detected_at"])))
+                    st.caption("Model: {} · Key: {}.".format(
+                        review["model_id"] or "—", review["key_id"] or "unknown"))
+                    for note in common.scoring_notes(review.get("repeated"),
+                                                     review.get("passage_z") if decisive else "",
+                                                     review.get("passage_p"), decisive):
+                        st.caption(note)
                 if reviews.counted_every_repeat(review):
                     st.warning("Scored with the earlier counting, which counted every repeated word and "
                                "makes human writing look more watermarked than it is. Score again for "

@@ -170,6 +170,12 @@ else:
                                icon=":material/download:", key="hist_export_summary")
 
     with st.container(border=True):
+        st.subheader("Models", anchor=False)
+        st.caption("Which model each score names. Flagged means its key matched; the rest did "
+                   "not. Rows from before models were recorded land in Unknown.")
+        st.altair_chart(charts.model_chart(filtered))
+
+    with st.container(border=True):
         with st.container(horizontal=True, vertical_alignment="center"):
             st.subheader("Records", anchor=False)
             state["export_rows"] = filtered
