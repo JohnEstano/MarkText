@@ -25,6 +25,20 @@ logs/detection_history.csv
 !generated/normal/.gitkeep
 !generated/watermarked/.gitkeep
 
+# Node / Next.js (node_modules is ~500 MB / ~10k files, never commit it)
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+coverage/
+.turbo/
+.vercel
+
 # IDE / editor
 .vscode/
 .idea/
@@ -41,3 +55,13 @@ Thumbs.db
 *.env.local
 # History-tab exports and backups (web front-end)
 logs/exports/
+
+# Classroom data: accounts, classes, submissions, reviews (created at run time)
+data/*
+!data/.gitkeep
+data.archived_*/
+
+# Streamlit secrets (only needed for OIDC sign-in, not used yet)
+.streamlit/secrets.toml
+# lock files held while a data file is being changed (locks.py)
+*.lock

@@ -1,0 +1,791 @@
+"""What every page shares: the model, the signed-in person, badges, dialogs,
+flash messages and navigation between pages.
+
+Streamlit reruns a page script on every interaction. Anything that must
+survive a rerun is kept in st.session_state (one per browser tab); the
+model is kept in st.cache_resource (one per server process).
+"""
+
+import collections
+import copy
+import functools
+import logging
+import re
+import threading
+import time
+
+import streamlit as st
+
+import config as cfg
+import verdict
+from classroom import accounts, assignments, paths, reports, reviews, store, submissions
+
+log = logging.getLogger("marktext")
+
+# absolute, so the app also starts from another working folder
+STATIC_DIR = paths.BASE_DIR / "static"
+MARK = str(STATIC_DIR / "mark.svg")
+
+# ------------------------------------------------------------------ state
+DEFAULTS = {
+    "user": None,               # public account record once signed in
+    "dialog": None,             # {"name": ..., **context} while a dialog is open
+    "flash": [],                # (message, icon) toasts to show on the next run
+    "errors": {},               # control -> error, shown beside it on the next run (fail/error_here)
+    "goto": None,               # page to switch to on the next run
+    "page_seen": None,          # url path of the page shown last run
+    "config_notes": [],         # what the config loader reported this session
+    "notes_dismissed": [],
+    "weak_password": False,     # signed in with a password that should be changed
+    "last_seen": None,          # time of the last interaction, for the idle sign-out
+    "review_drafts": {},        # review id -> unsaved decision and note
+    "open_class_id": None,      # Classes page: the class that is open
+    "open_assignment_id": None, # student Assignment page
+    "review_class": None,       # Review page selectors
+    "review_assignment": None,
+    "review_pick": None,
+    "run_detect": None,         # "all" or a submission id, handled at page top
+    "assistant_draft": None,    # {"assignment_id", "text", "record"}
+}
+
+
+def init_state():
+    for key, value in DEFAULTS.items():
+        st.session_state.setdefault(key, copy.deepcopy(value))
+
+
+def load_config():
+    """The validated config. What the loader reports (a config created, a key
+    generated, the public key in use) is added to this session's notes, so a
+    note from the first run of the session is still there on later runs.
+    ValueError propagates to app.py."""
+    notes = []
+    config = cfg.load_config(notes=notes)
+    store.KEEP_BACKUPS = config["classroom"]["keep_backups"]
+    kept = st.session_state.setdefault("config_notes", [])
+    dismissed = st.session_state.get("notes_dismissed", [])
+    for note in notes:
+        if note not in kept and note not in dismissed:
+            kept.append(note)
+    return config
+
+
+def dismiss_notes():
+    state = st.session_state
+    state["notes_dismissed"] = state.get("notes_dismissed", []) + state.get("config_notes", [])
+    state["config_notes"] = []
+
+
+# ------------------------------------------------------------------ model
+MODEL = {"loaded": False, "model_id": "", "device": ""}
+
+
+def make_engine(config):
+    """Build the real engine. Tests replace this function with a fake."""
+    import engine              # late: importing torch and loading the model is slow
+    return engine.Engine(config)
+
+
+@st.cache_resource(show_spinner=False)          # engine() shows a message for the person's role
+def get_engine():
+    """One engine per server process, shared by every browser tab. The lock
+    serialises calls, because the model is one object used by all sessions."""
+    config = cfg.load_config()
+    eng = make_engine(config)
+    MODEL.update(loaded=True, model_id=config["model_id"], device=eng.device)
+    return eng, threading.Lock()
+
+
+def make_scorer(config):
+    """Build the model-free scorer. Tests replace this function with a fake."""
+    import scorer               # late: importing torch is slow
+    return scorer.Scorer(config)
+
+
+@st.cache_resource(show_spinner="Loading the tokenizer...")
+def get_scorer():
+    """One scorer per server process, with its own lock: scoring needs the
+    tokenizer and the model's configuration, never the weights, so the
+    teacher does not wait for the model to load or for a student's draft."""
+    return make_scorer(cfg.load_config()), threading.Lock()
+
+
+def scorer():
+    """(scorer, lock) for detection. A config edited since (a new key, other
+    thresholds) builds a new scorer, which takes about a second."""
+    sc, lock = get_scorer()
+    if cfg.load_config() != sc.config:
+        get_scorer.clear()
+        sc, lock = get_scorer()
+    return sc, lock
+
+
+@st.cache_resource(show_spinner="Loading the tokenizer...")
+def get_retired_scorer(key_id, fingerprint):
+    """A scorer for a retired key (see config.rotate_key), one per key id;
+    `fingerprint` (the config without keys) makes an edited config build a
+    new one."""
+    return make_scorer(cfg.config_for_key(cfg.load_config(), key_id)), threading.Lock()
+
+
+def scorer_for(submission):
+    """(scorer, lock) for one submission: an assistant draft is scored with
+    the key it was made with when that key has been retired; everything
+    else with the current key."""
+    from classroom import detection     # late: detection imports history
+    config = cfg.load_config()
+    key_id = detection.drafted_with(submission)
+    if key_id and key_id != config["watermark"]["key_id"] and cfg.config_for_key(config, key_id):
+        return get_retired_scorer(key_id, repr(cfg.redacted(config)))
+    return scorer()
+
+
+def engine():
+    """(engine, lock), loading the model on first use. A config edited since
+    the model loaded (a new key, other thresholds) is adopted first, so a
+    score always uses the key the pages name; a new model id or device
+    loads a new engine."""
+    if MODEL["loaded"]:
+        eng, lock = get_engine()
+    else:
+        student = (current_user() or {}).get("role") == "student"
+        with st.spinner("Starting the writing assistant (about 20 s the first time)..." if student
+                        else "Loading the language model (the first run downloads about 1 GB)..."):
+            eng, lock = get_engine()
+    config = cfg.load_config()
+    if config != eng.config:
+        with lock:
+            adopted = config == eng.config or eng.reconfigure(config)
+        if not adopted:
+            get_engine.clear()
+            eng, lock = get_engine()
+    return eng, lock
+
+
+# ------------------------------------------------------------------ long work
+def start_job(name, work, label, expected_s, **context):
+    """Run work() (a model call of about a minute) in a thread of its own,
+    keeping what it returns in a plain dict at st.session_state[name].
+
+    Not in the page's own run: a click starts a new run at once (Streamlit's
+    fast reruns) and asks the old one to stop, and the old run stops at its
+    next touch of st.session_state, the very write that would have kept the
+    result (SafeSessionState checks for a stop request on every access). The
+    thread never touches st.session_state: it fills in the dict, which every
+    later run of the session sees. The desktop app's worker threads work the
+    same way (main.py). Waits half a second, so quick results and errors
+    (an empty request) show at once."""
+    job = dict(context, label=label, expected_s=expected_s, started=time.time(),
+               done=False, result=None, error=None)
+
+    def run():
+        try:
+            job["result"] = work()
+        except Exception as exc:              # shown on the page by finished_job's caller
+            job["error"] = str(exc) or exc.__class__.__name__
+        finally:
+            job["done"] = True
+    st.session_state[name] = job
+    worker = threading.Thread(target=run, name="marktext-" + name, daemon=True)
+    worker.start()
+    worker.join(timeout=0.5)
+    return job
+
+
+def job_running(name):
+    job = st.session_state.get(name)
+    return job is not None and not job["done"]
+
+
+def finished_job(name):
+    """The job at st.session_state[name] once it has finished, taken out of
+    the session state for the caller to show; None before that. While it
+    runs: a progress bar that refreshes itself every second and reruns the
+    whole page when the job ends, so the result appears without a click."""
+    job = st.session_state.get(name)
+    if job is None:
+        return None
+    if job["done"]:
+        del st.session_state[name]
+        return job
+
+    @st.fragment(run_every=1.0)
+    def progress():
+        if job["done"]:
+            st.rerun()                        # the whole page, which then shows the result
+        elapsed = time.time() - job["started"]
+        st.progress(min(elapsed / max(job["expected_s"], 1.0), 0.99),
+                    text="{} {:.0f} s so far.".format(job["label"], elapsed))
+    progress()
+    return None
+
+
+# ------------------------------------------------------------------ people
+def current_user():
+    return st.session_state.get("user")
+
+
+def require_role(role):
+    """The signed-in user, or stop the page. Pages are only registered for
+    their role, so this is a second line of defence."""
+    user = current_user()
+    if user is None or user["role"] != role:
+        st.error("This page is for {}s.".format(role), icon=":material/lock:")
+        st.stop()
+    return user
+
+
+def sign_in(user):
+    st.session_state["user"] = user
+    st.session_state["goto"] = None
+    st.session_state["last_seen"] = time.time()
+
+
+def idle_minutes(config):
+    return int(config.get("classroom", {}).get("idle_minutes", 30))
+
+
+def check_idle(config):
+    """Sign out a tab that has been idle for longer than the configured
+    minutes (0 = never), then count this interaction. A classroom laptop
+    left open must not stay signed in as the teacher."""
+    state = st.session_state
+    limit = idle_minutes(config)
+    now = time.time()
+    if state.get("user") and limit and state.get("last_seen") and now - state["last_seen"] > limit * 60:
+        # what this click already did (its callbacks run first, e.g. "Version 2
+        # handed in.") is still said after the sign-out
+        done = list(state.get("flash", []))
+        sign_out()
+        init_state()
+        st.session_state["flash"] = done
+        flash("You were signed out after {} minutes without activity.".format(limit), ":material/timer:")
+    state["last_seen"] = now
+
+
+def sign_out():
+    """Forget everything this tab knew; the next run shows the sign-in page.
+    The address stays (a reload signs in again where it was), so the next
+    sign-in on this tab goes to that person's home page instead: the last
+    page of someone who signed out is not where the next person starts."""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.session_state["after_sign_out"] = True
+
+
+HOME_PAGES = {"teacher": "app_pages/teacher_home.py", "student": "app_pages/student_home.py"}
+
+
+def first_name(user):
+    name = user.get("display_name") or user["username"]
+    return name.split()[0] if not name.lower().startswith(("prof", "dr", "mr", "ms", "mrs")) else name
+
+
+# ------------------------------------------------------------------ pages
+def page(path, title, icon, default=False):
+    return st.Page(path, title=title, icon=icon, default=default)
+
+
+# Addresses of the pages behind the sign-in (the two home pages live at "/").
+PROTECTED = ("teacher_classes", "teacher_review", "teacher_records", "lab_generate", "lab_detect",
+             "lab_history", "lab_experiment", "account", "about", "student_assignment",
+             "student_submissions")
+
+
+def pages_for(user):
+    if user is None:
+        # Sign-in lasts for one browser tab, so a reload lands here signed out.
+        # The sign-in form answers at every protected address too: after
+        # signing in, the person is back on the page they reloaded.
+        return [page("app_pages/login.py", "Sign in", ":material/login:", default=True)] + [
+            st.Page("app_pages/login.py", title="Sign in", icon=":material/login:", url_path=name)
+            for name in PROTECTED]
+    account = [page("app_pages/account.py", "Account", ":material/person:"),
+               page("app_pages/about.py", "About", ":material/info:")]
+    if user["role"] == "teacher":
+        return {
+            "": [page("app_pages/teacher_home.py", "Home", ":material/home:", default=True),
+                 page("app_pages/teacher_classes.py", "Classes", ":material/school:"),
+                 page("app_pages/teacher_review.py", "Review", ":material/fact_check:"),
+                 page("app_pages/teacher_records.py", "Records", ":material/folder_managed:")],
+            "Lab": [page("app_pages/lab_generate.py", "Generate", ":material/edit_note:"),
+                    page("app_pages/lab_detect.py", "Detect", ":material/manage_search:"),
+                    page("app_pages/lab_history.py", "History", ":material/history:"),
+                    page("app_pages/lab_experiment.py", "Experiment", ":material/science:")],
+            "Account": account,
+        }
+    return {
+        "": [page("app_pages/student_home.py", "Home", ":material/home:", default=True),
+             page("app_pages/student_assignment.py", "Assignment", ":material/edit_document:"),
+             page("app_pages/student_submissions.py", "My submissions", ":material/inventory_2:")],
+        "Account": account,
+    }
+
+
+def go(path):
+    """Ask for another page. Safe inside callbacks, where st.switch_page is
+    not allowed: app.py switches at the start of the next run."""
+    st.session_state["goto"] = path
+
+
+def follow_goto():
+    target = st.session_state.get("goto")
+    if target:
+        st.session_state["goto"] = None
+        st.switch_page(target)
+
+
+def open_review(class_id, assignment_id, username=None):
+    state = st.session_state
+    state["review_class"], state["review_assignment"] = class_id, assignment_id
+    state["review_pick"] = username
+    go("app_pages/teacher_review.py")
+
+
+def open_assignment(assignment_id):
+    st.session_state["open_assignment_id"] = assignment_id
+    go("app_pages/student_assignment.py")
+
+
+def unique_labels(options, format_func=str, detail=None):
+    """option -> label, no two alike. A select box sends back the label that
+    was picked and Streamlit maps it to the last option with that label, so
+    of two students both called "Alice Santos" the first could never be
+    opened. Labels shared by several options get detail(option) added, then
+    a number when that is still not enough."""
+    labels = {o: str(format_func(o)) for o in options}
+    if detail is not None:
+        shared = collections.Counter(labels.values())
+        for o in options:
+            if shared[labels[o]] > 1:
+                labels[o] = "{} · {}".format(labels[o], detail(o))
+    taken = set(labels.values())
+    used = set()
+    for o in options:
+        label = labels[o]
+        if label in used:
+            n = 2
+            while "{} ({})".format(label, n) in taken:
+                n += 1
+            label = "{} ({})".format(label, n)
+            taken.add(label)
+        used.add(label)
+        labels[o] = label
+    return labels
+
+
+def choose(label, options, state_key, format_func=str, detail=None, **kwargs):
+    """A selectbox whose choice lives in st.session_state[state_key], which
+    other pages may set (a widget's own key is dropped when its page is not
+    shown). Labels are made unique (unique_labels, with `detail`). Returns
+    the chosen option; `options` must not be empty."""
+    state = st.session_state
+    widget_key = "_pick_" + state_key
+    labels = unique_labels(options, format_func, detail)
+    current = state.get(state_key)
+    if current not in options:
+        current = options[0]
+        state[state_key] = current
+    if state.get(widget_key) != current:
+        # set before the widget is drawn: the browser then shows this value
+        # (deleting the key would leave the browser's old choice on screen)
+        state[widget_key] = current
+
+    def sync():
+        state[state_key] = state[widget_key]
+    st.selectbox(label, options, format_func=lambda o: labels.get(o, str(o)), key=widget_key,
+                 on_change=sync, **kwargs)
+    return current
+
+
+def on_page_change(nav):
+    """A dialog belongs to the page that opened it."""
+    state = st.session_state
+    if state.get("page_seen") != nav.url_path:
+        state["dialog"] = None
+        state["page_seen"] = nav.url_path
+
+
+# ----------------------------------------------------------------- dialogs
+# A dialog is opened by a flag in session state, never by `if st.button()`:
+# the page calls render_dialogs() last, and the dialog stays open on every
+# rerun until it closes itself. (A dialog body is a fragment; a transient
+# button press would not survive a full rerun, which is also all that
+# AppTest does.)
+def open_dialog(name, **context):
+    st.session_state["dialog"] = dict(context, name=name)
+
+
+def close_dialog():
+    st.session_state["dialog"] = None
+
+
+def render_dialogs(registry):
+    current = st.session_state.get("dialog")
+    if current and current["name"] in registry:
+        context = {k: v for k, v in current.items() if k != "name"}
+        registry[current["name"]](**context)
+
+
+def finish_dialog(message=None, icon=":material/check_circle:"):
+    """Close the open dialog, queue a toast and rerun the whole page."""
+    close_dialog()
+    if message:
+        flash(message, icon)
+    st.rerun()
+
+
+# ------------------------------------------------------------------ flash
+ERROR_ICON = ":material/error:"
+
+
+def flash(message, icon=":material/check_circle:"):
+    st.session_state.setdefault("flash", []).append((message, icon))
+
+
+def fail(where, message):
+    """Keep an error for the control `where`; error_here(where), drawn
+    beside that control, shows it on the next run. Unlike a toast it stays
+    until the next click, where the person is looking."""
+    st.session_state.setdefault("errors", {})[where] = message
+
+
+def error_here(where):
+    message = st.session_state.get("errors", {}).pop(where, None)
+    if message:
+        st.error(md(message), icon=ERROR_ICON)
+
+
+def safely(action):
+    """Wrap a button callback: a ValueError (a broken rule, or a data file
+    that is open in another program) becomes a message on the next run
+    instead of an exception on the page."""
+    @functools.wraps(action)
+    def run(*args, **kwargs):
+        try:
+            return action(*args, **kwargs)
+        except ValueError as exc:
+            flash(str(exc), ":material/error:")
+    return run
+
+
+def problem(exc):
+    """What app.py shows when a page stops on a ValueError or an OSError (a
+    data file that is damaged, missing or locked). The traceback goes to
+    the server's log, not to the browser."""
+    log.exception("page stopped")
+    st.error(md(str(exc)) if isinstance(exc, ValueError) else
+             "A file could not be read or written: {}".format(md(exc)), icon=":material/error:")
+    st.caption("Nothing was changed. Close the file if another program has it open, or restore "
+               "it from data/backups, then reload the page.")
+
+
+def show_flash():
+    """Confirmations as toasts; an error as a red box at the top of the page,
+    which stays until the next click (a toast would vanish in seconds).
+    Errors of the main actions go beside their control instead (fail)."""
+    for message, icon in st.session_state.get("flash", []):
+        if icon == ERROR_ICON:
+            st.error(md(message), icon=icon)
+        else:
+            st.toast(md(message), icon=icon)   # messages quote names, titles and codes
+    st.session_state["flash"] = []
+
+
+def password_warning():
+    """On the home pages, below the title: the password is easy to guess or
+    was set by the teacher (state["weak_password"], set at sign-in)."""
+    message = st.session_state.get("weak_password")
+    if message:
+        with st.container(horizontal=True, vertical_alignment="center"):
+            st.warning(message, icon=":material/lock_reset:")
+            st.page_link("app_pages/account.py", label="Change it", icon=":material/arrow_forward:")
+
+
+# ------------------------------------------------------------------ badges
+VERDICT_BADGE = {
+    verdict.LABEL_LIKELY: ("Likely MarkText", "red", ":material/verified:"),
+    verdict.LABEL_POSSIBLE: ("Possible watermark", "orange", ":material/help:"),
+    verdict.LABEL_NOT_DETECTED: ("Not detected", "gray", ":material/remove:"),
+    verdict.LABEL_INCONCLUSIVE: ("Inconclusive, too short", "gray", ":material/hourglass_empty:"),
+}
+DECISION_BADGE = {
+    "pending": ("Pending", "gray", ":material/schedule:"),
+    "accepted": ("Accepted", "green", ":material/check_circle:"),
+    "flagged": ("Flagged", "red", ":material/flag:"),
+    "needs_review": ("Needs review", "orange", ":material/rate_review:"),
+}
+# what a returned decision asks of the student, shown with it on the student's pages
+DECISION_FOR_STUDENT = {
+    "accepted": "Your teacher accepted this version.",
+    "flagged": "Your teacher flagged this version. Read the note; your teacher may want to talk "
+               "to you about it.",
+    "needs_review": "Your teacher would like you to revise this. Read the note, then hand in a new "
+                    "version.",
+}
+STATE_BADGE = {
+    "not submitted": ("Not submitted", "gray", ":material/radio_button_unchecked:"),
+    "awaiting detection": ("Not scored", "blue", ":material/hourglass_empty:"),
+    "awaiting decision": ("Scored", "orange", ":material/pending_actions:"),
+    "decided": ("Decided", "violet", ":material/task_alt:"),
+    "returned": ("Returned", "green", ":material/done_all:"),
+    # student-side states
+    "submitted": ("Handed in", "blue", ":material/assignment_turned_in:"),
+}
+# colours for the same states in tables (MultiselectColumn badges)
+STATE_ORDER = list(reports.STATES)
+STATE_COLOURS = ["gray", "blue", "orange", "violet", "green"]
+VERDICT_ORDER = list(VERDICT_BADGE)
+VERDICT_COLOURS = ["red", "orange", "gray", "gray"]
+
+
+def verdict_text(label):
+    return VERDICT_BADGE.get(label, (label or "Not scored", "gray", None))[0]
+
+
+def decision_text(decision):
+    return reviews.DECISION_LABELS.get(decision, decision or "")
+
+
+def verdict_badge(label, where=st):
+    text, colour, icon = VERDICT_BADGE.get(label, (label or "Not scored", "gray", None))
+    where.badge(text, icon=icon, color=colour)
+
+
+def decision_badge(decision, where=st):
+    text, colour, icon = DECISION_BADGE.get(decision, (decision, "gray", None))
+    where.badge(text, icon=icon, color=colour)
+
+
+def state_badge(state, where=st):
+    text, colour, icon = STATE_BADGE.get(state, (state, "gray", None))
+    where.badge(text, icon=icon, color=colour)
+
+
+# ------------------------------------------------------------------ layout
+def empty_state(title, body, icon="inbox", links=()):
+    """An empty list says what would fill it; `links` [(page, label), ...]
+    are the pages where that happens, one click away."""
+    with st.container(border=True, horizontal_alignment="center"):
+        st.space("small")
+        st.markdown(":material/{}:".format(icon), text_alignment="center")
+        st.markdown("**{}**".format(title), text_alignment="center")
+        st.caption(body, text_alignment="center")
+        if links:
+            with st.container(horizontal=True, horizontal_alignment="center"):
+                for page, label in links:
+                    st.page_link(page, label=label, icon=":material/arrow_forward:")
+        st.space("small")
+
+
+def short_list(items, draw, first=5):
+    """draw(item) for the first `first` items and the rest under "N more",
+    so a long list does not push the rest of the page out of sight."""
+    for item in items[:first]:
+        draw(item)
+    rest = items[first:]
+    if rest:
+        with st.expander("{} more".format(len(rest))):
+            for item in rest:
+                draw(item)
+
+
+def open_class(class_id):
+    """Show this class on the Classes page (safe in callbacks)."""
+    st.session_state["open_class_id"] = class_id
+    go("app_pages/teacher_classes.py")
+
+
+def metric_row(items):
+    """[(label, value, help), ...] as bordered metrics that wrap on phones."""
+    with st.container(horizontal=True):
+        for label, value, help_text in items:
+            st.metric(label, value, help=help_text, border=True)
+
+
+# Streamlit's password box has a show-password button, and Tab stops on it
+# between two fields. Streamlit already keeps its own Clear button out of the
+# Tab order (tabIndex -1); this does the same for the show-password button,
+# which stays clickable. st.html is not iframed, so the script runs in the app
+# page; the observer, made once per browser tab, also catches password boxes
+# drawn later (another page, the Register form).
+_SKIP_SHOW_PASSWORD = """<script>
+(() => {
+  const skip = () => document.querySelectorAll(
+    '[data-testid="stTextInputRootElement"] button[aria-label$="password"]'
+  ).forEach((button) => { if (button.tabIndex !== -1) button.tabIndex = -1; });
+  skip();
+  if (!window.marktextSkipShowPassword) {
+    window.marktextSkipShowPassword = new MutationObserver(skip);
+    window.marktextSkipShowPassword.observe(document.body, {childList: true, subtree: true});
+  }
+})();
+</script>"""
+
+
+def skip_show_password_buttons():
+    """Tab goes from a password field straight to the next field. Call it
+    below the forms: the element has no height but adds one gap above it."""
+    st.html(_SKIP_SHOW_PASSWORD, unsafe_allow_javascript=True)
+
+
+_MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>$])")
+
+
+def _escape(text):
+    return _MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
+
+
+_INLINE_SPECIAL = re.compile(r"([\\`*_{}\[\]()<>!$~|])")
+
+
+def md(text):
+    """User-written text inside one line of Markdown (a name, a title, a
+    note, a message): shown literally, never as a link, an image, bold,
+    HTML or a formula. A student's display name reaches the teacher's
+    pages, so "![x](http://...)" must stay text."""
+    text = _INLINE_SPECIAL.sub(r"\\\1", str(text or ""))
+    text = re.sub(r"^([#+\-])", r"\\\1", text)          # would start a heading or a list
+    text = re.sub(r"^(\d+)\.", r"\1\\.", text)          # "1." would start a numbered list
+    return " ".join(text.split())
+
+
+def plain(text):
+    """Show user-written text literally in st.markdown (no accidental bold,
+    links or formulas) while keeping its line breaks."""
+    return "  \n".join(_escape(text).split("\n"))
+
+
+def highlighted(text, start, end, colour="orange"):
+    """plain(text) with the characters start..end on a coloured background
+    (the strongest passage the scorer found). Each line of the passage is
+    marked on its own, because a background cannot span a line break."""
+    text = text or ""
+    start, end = max(0, int(start)), min(len(text), int(end))
+    if start >= end:
+        return plain(text)
+    marked = [":{}-background[{}]".format(colour, _escape(line)) if line.strip() else _escape(line)
+              for line in text[start:end].split("\n")]
+    body = _escape(text[:start]) + "\n".join(marked) + _escape(text[end:])
+    return "  \n".join(body.split("\n"))
+
+
+def draft_changes(draft, final):
+    """How much of the assistant's draft is still in the handed-in text, and
+    the text with the changes marked: words kept as they are, added words
+    bold on green, removed words struck through on red (a mark besides the
+    colour, so colour is not the only signal). Compared word by word
+    (difflib.SequenceMatcher). Returns (share of draft words kept, markdown)."""
+    import difflib
+    a, b = draft.split(), final.split()
+    if not a:
+        return 0.0, plain(final)
+    matcher = difflib.SequenceMatcher(None, a, b, autojunk=False)
+    kept = sum(block.size for block in matcher.get_matching_blocks())
+    parts = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            parts.append(md(" ".join(b[j1:j2])))
+        if tag in ("delete", "replace"):
+            parts.append(":red-background[~~{}~~]".format(md(" ".join(a[i1:i2]))))
+        if tag in ("insert", "replace"):
+            parts.append(":green-background[**{}**]".format(md(" ".join(b[j1:j2]))))
+    return kept / len(a), " ".join(parts)
+
+
+def passage_decided(review, config):
+    """True when a review's "likely" came from a passage, not from the
+    whole text: the whole-text z is under the threshold."""
+    if not review or review.get("label") != verdict.LABEL_LIKELY:
+        return False
+    if review.get("passage_z") in ("", None) or review.get("passage_start") in ("", None):
+        return False
+    try:
+        return float(review["z_score"]) < float(config["detection_threshold"])
+    except (TypeError, ValueError):
+        return False
+
+
+def scoring_notes(repeated, passage_z, passage_p, decisive):
+    """Captions that explain a score beyond its z: repeats counted once,
+    and the strongest passage with its corrected p-value."""
+    notes = []
+    if repeated and int(float(repeated)) > 0:
+        count = int(float(repeated))
+        notes.append("{} repeated phrase{} counted once: a repeat is not new evidence.".format(
+            count, "" if count == 1 else "s"))
+    if passage_z not in ("", None):
+        notes.append("Strongest passage (highlighted): z = {:.2f} over {} scored tokens, p = {} after "
+                     "correcting for every passage tried.{}".format(
+                         float(passage_z), verdict.PASSAGE_WINDOW, passage_p,
+                         " The verdict comes from this passage." if decisive else ""))
+    return notes
+
+
+def when(timestamp):
+    """'2026-09-29 14:05:12' -> 'Sep 29, 14:05'. An unreadable value shows as it is."""
+    moment = store.parse_time(timestamp)
+    if moment is None:
+        return timestamp or ""
+    return moment.strftime("%b %d, %H:%M").replace(" 0", " ")
+
+
+def day(iso_date):
+    """'2026-10-15' -> 'Oct 15, 2026'. An unreadable value shows as it is."""
+    date = store.parse_date(iso_date)
+    if date is None:
+        return iso_date or ""
+    return date.strftime("%b %d, %Y").replace(" 0", " ")
+
+
+def unsaved_draft(review):
+    """The teacher's unsaved decision, note and points for a review (kept in
+    st.session_state["review_drafts"] by the Review page) when they differ
+    from what is saved; None otherwise."""
+    draft = st.session_state.get("review_drafts", {}).get(review["review_id"])
+    if not draft:
+        return None
+    graded = assignments.max_points(assignments.get_assignment(review["assignment_id"]) or {})
+    saved = (review["decision"] if review["decision"] != "pending" else None, review["note"],
+             float(review["points"]) if graded and review.get("points") else None)
+    return draft if (draft["decision"], draft["note"], draft["points"] if graded else None) != saved else None
+
+
+def submission_text(sub):
+    """The text of a submission, or None after a warning on the page when its
+    file is missing or cannot be read."""
+    try:
+        return submissions.read_text(sub)
+    except ValueError as exc:
+        st.warning(md(str(exc)), icon=":material/warning:")
+        return None
+
+
+# ------------------------------------------------------------------ files
+def data_label(path):
+    """How a file under data/ or logs/ is named on screen."""
+    try:
+        return "data/" + paths.data_relative(path)
+    except ValueError:
+        return str(path)
+
+
+def sidebar_footer(user):
+    with st.sidebar:
+        st.space("small")
+        with st.container(border=True):
+            st.markdown("**{}**".format(md(user["display_name"])))
+            st.caption("{} · {}".format(md(user["username"]), user["role"].capitalize()))
+            if st.session_state.get("weak_password"):
+                st.page_link("app_pages/account.py", label="Change your password", icon=":material/lock_reset:")
+            st.button("Sign out", icon=":material/logout:", key="sign_out", on_click=sign_out,
+                      type="tertiary")
+        if MODEL["loaded"]:
+            st.caption("Model {} on {}".format(MODEL["model_id"], MODEL["device"]))
+        else:
+            st.caption("The model loads the first time it is needed.")
+
+
+def display_name(username):
+    user = accounts.get_user(username)
+    return user["display_name"] if user else username

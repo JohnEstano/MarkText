@@ -1,10 +1,14 @@
 """Pure parts of engine.py: no model is loaded here."""
+import copy
 import json
 
 import pytest
+import torch
 
+import config as cfg
 import engine
 import main
+import verdict
 
 
 CFG = {"detection_threshold": 4.0, "possible_threshold": 2.0, "min_tokens_for_verdict": 100}
@@ -46,3 +50,49 @@ def test_sidecar_round_trip(tmp_path):
     assert "text" not in data and data["seed"] == 42 and data["text_file"] == txt.name
     assert main.read_sidecar(txt)["mode"] == "watermarked"
     assert main.read_sidecar(tmp_path / "nothing.txt") is None
+
+
+def test_labels_and_classify_are_reexported_from_verdict():
+    assert engine.classify is verdict.classify
+    assert engine.LABELS == verdict.LABELS
+
+
+def test_placeholder_stats_are_inconclusive_and_keyless():
+    c = copy.deepcopy(cfg.DEFAULT_CONFIG)
+    c["watermark"]["hashing_key"] = 987654321
+    stats = verdict.placeholder_stats(c, "cpu")
+    assert stats["label"] == verdict.LABEL_INCONCLUSIVE and stats["num_tokens_scored"] == 0
+    assert "987654321" not in json.dumps(stats)
+
+
+class _Batch(dict):
+    def to(self, device):
+        return self
+
+
+class _FakeTokenizer:
+    def apply_chat_template(self, messages, tokenize, add_generation_prompt):
+        return "prompt"
+
+    def __call__(self, text, return_tensors):
+        return _Batch(input_ids=torch.tensor([[1, 2, 3]]))
+
+    def decode(self, ids, skip_special_tokens):
+        return "decoded text"
+
+
+class _FakeModel:
+    def generate(self, **kwargs):
+        return torch.tensor([[1, 2, 3, 4, 5]])
+
+
+def test_generate_result_never_contains_the_hashing_key():
+    eng = engine.Engine.__new__(engine.Engine)          # no model download
+    eng.config = copy.deepcopy(cfg.DEFAULT_CONFIG)
+    eng.config["watermark"].update(hashing_key=123456789, key_id="0a1b2c3d")
+    eng.device = "cpu"
+    eng.tokenizer, eng.model, eng.watermark_config = _FakeTokenizer(), _FakeModel(), object()
+    out = eng.generate("hi", max_new_tokens=5, watermarked=True, seed=1)
+    dumped = json.dumps(out)
+    assert "hashing_key" not in dumped and "123456789" not in dumped
+    assert out["watermark"]["key_id"] == "0a1b2c3d" and out["new_tokens"] == 2
