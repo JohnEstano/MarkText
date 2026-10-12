@@ -23,11 +23,21 @@ def test_unknown_model_is_rejected(client):
     assert client.post("/detect", json={"text": "wm " * 150, "model": "llama"}).status_code == 422
 
 
+def test_detect_names_the_winning_model(client):
+    names = [m["name"] for m in client.get("/models").json()["models"]]
+    r = client.post("/detect", json={"text": "wm " * 150}).json()
+    assert r["model"] == names[0] and r["label"] == "LIKELY MARKTEXT"
+    assert [s["model"] for s in r["scores"]] == names
+    n = client.post("/detect", json={"text": "nm " * 150}).json()
+    assert n["model"] == "" and n["label"] == "NOT DETECTED"
+
+
 def test_history_model_filter(client):
     client.post("/detect", json={"text": "wm " * 150}).json()
     h = client.get("/history", params={"model": ["qwen05"]}).json()
-    assert h["kpis"]["count"] == 0 and h["total"] == 1
-    assert client.get("/history").json()["options"]["models"] == []
+    assert h["kpis"]["count"] == 1 and h["total"] == 1
+    assert client.get("/history").json()["options"]["models"] == ["qwen05"]
+    assert client.get("/history", params={"model": ["smol360"]}).json()["kpis"]["count"] == 0
 
 
 def test_generate_and_save(client):

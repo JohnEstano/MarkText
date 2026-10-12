@@ -52,6 +52,7 @@ def test_assistant_draft_is_logged_with_its_provenance(course):
     assert rev["label"] == "LIKELY MARKTEXT"
     log = history.find_record(rev["run_id"])
     assert log["mode"] == "watermarked" and log["seed"] == "42" and log["gen_tokens"] == "120"
+    assert log["model"] == eng.model_name
 
 
 def test_text_too_short_to_score_is_inconclusive(course):
@@ -150,3 +151,59 @@ def test_a_draft_is_scored_with_the_key_it_was_made_with(course):
                                 pick=lambda s: (engines[detection.drafted_with(s) or "ffff0000"],
                                                 threading.Lock()))
     assert run["written"][0]["key_id"] == "0a1b2c3d"
+
+
+class _Stub:
+    """A scorer with a fixed answer, standing in for one model's key."""
+    device = "cpu"
+
+    def __init__(self, model, key_id, z, label):
+        self.model_name = model
+        self.config = {"model_id": "fake/" + model}
+        self._stats = {"num_tokens_scored": 150, "num_green_tokens": 100, "green_fraction": 0.67,
+                       "z_score": z, "prediction": z >= 4, "p_value": 1e-6, "confidence": 0.99,
+                       "label": label, "input_tokens": 160, "repeated": 0, "passage": None,
+                       "device": "cpu", "watermark": {"bias": 3.0, "greenlist_ratio": 0.5,
+                                                      "seeding_scheme": "selfhash",
+                                                      "context_width": 5, "key_id": key_id}}
+
+    def detect(self, text):
+        return dict(self._stats)
+
+
+def _cands(*stubs):
+    return [(s.model_name, s, threading.Lock()) for s in stubs]
+
+
+def test_trial_models_names_the_highest_z():
+    low = _Stub("aaa", "aaaaaaaa", 0.5, "NOT DETECTED")
+    high = _Stub("bbb", "bbbbbbbb", 6.0, "LIKELY MARKTEXT")
+    name, stats, table = detection.trial_models(_cands(low, high), "some text here")
+    assert name == "bbb" and stats["z_score"] == 6.0
+    assert table == [("aaa", 0.5, "NOT DETECTED"), ("bbb", 6.0, "LIKELY MARKTEXT")]
+    assert detection.trial_models(_cands(high, low), "x")[0] == "bbb"   # order-free
+    assert detection.trial_models([], "x") == (None, None, [])
+    assert detection.winner_model(name, stats) == "bbb"
+    assert detection.winner_model("aaa", low.detect("x")) == ""          # negatives name none
+
+
+def test_typed_text_is_tried_against_every_model(course):
+    task = course["assignment"]
+    sub = submissions.submit(task["assignment_id"], "alice", "a human essay " * 40)
+    low = _Stub("aaa", "aaaaaaaa", -0.5, "NOT DETECTED")
+    high = _Stub("bbb", "bbbbbbbb", 6.0, "LIKELY MARKTEXT")
+    rev = detection.detect_submission(low, threading.Lock(), sub, "prof",
+                                      candidates=_cands(low, high))
+    assert rev["label"] == "LIKELY MARKTEXT"
+    assert rev["model_id"] == "fake/bbb" and rev["key_id"] == "bbbbbbbb"
+    assert history.find_record(rev["run_id"])["model"] == "bbb"
+
+
+def test_typed_text_matching_no_key_names_no_model(course):
+    task = course["assignment"]
+    sub = submissions.submit(task["assignment_id"], "alice", "a human essay " * 40)
+    low = _Stub("aaa", "aaaaaaaa", -0.5, "NOT DETECTED")
+    rev = detection.detect_submission(low, threading.Lock(), sub, "prof",
+                                      candidates=_cands(low))
+    assert rev["label"] == "NOT DETECTED"
+    assert history.find_record(rev["run_id"])["model"] == ""

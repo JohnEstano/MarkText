@@ -43,32 +43,79 @@ def _history_extra(submission):
     side = submissions.sidecar(submission) or {}
     gen = side.get("generation")
     if gen:                                   # drafted with the assistant: known provenance
-        extra.update(mode=gen.get("mode", ""), seed=gen.get("seed", ""),
-                     max_new_tokens=gen.get("max_new_tokens", ""),
+        extra.update(mode=gen.get("mode", ""), model=gen.get("model", ""),
+                     seed=gen.get("seed", ""), max_new_tokens=gen.get("max_new_tokens", ""),
                      gen_tokens=gen.get("new_tokens", ""))
     return extra
 
 
-def detect_submission(engine, lock, submission, detected_by):
+def trial_models(candidates, text):
+    """Score `text` with every (model name, scorer, lock) candidate and
+    return (winner name, winner stats, [(name, z, label)] for every model
+    that scored). The winner is the highest z-score; ties go to the earlier
+    candidate. Returns (None, None, []) when nothing scores (too short for
+    every model). Scorers only need tokenizers, so trying every model is
+    cheap: no weights load."""
+    scored = []
+    for name, scorer, lock in candidates:
+        with lock:
+            stats = scorer.detect(text)
+        if stats is not None:
+            scored.append((name, stats))
+    if not scored:
+        return None, None, []
+    best = max(range(len(scored)), key=lambda i: (scored[i][1]["z_score"], -i))
+    name, stats = scored[best]
+    return name, stats, [(n, s["z_score"], s["label"]) for n, s in scored]
+
+
+def winner_model(name, stats):
+    """The model a logged row should name: the trial winner when its own
+    scale says the key may be present (likely or possible), else "".
+    Naming a model for a negative would claim what no evidence supports."""
+    if stats is not None and stats.get("label") in (verdict.LABEL_LIKELY,
+                                                    verdict.LABEL_POSSIBLE):
+        return name or ""
+    return ""
+
+
+def detect_submission(engine, lock, submission, detected_by, candidates=None):
     """Score one submission, log it, record the review, return the review.
+    A draft made with the assistant is scored with its own model and key;
+    anything else is tried against every `candidates` entry
+    [(model name, scorer, lock)] when given, else against `engine` alone.
     Raises MissingText when the text file is gone and FileProblem when a
     file cannot be written; in both cases nothing was written."""
     text = submissions.read_text(submission)
     store.check_writable(history.HISTORY_PATH, paths.reviews_path())
-    with lock:
-        stats = engine.detect(text)
+    side = submissions.sidecar(submission) or {}
+    gen = side.get("generation")
+    scorer, use_lock = engine, lock
+    model, stats, tried = getattr(engine, "model_name", ""), None, False
+    if not gen and candidates:
+        model, stats, _scores = trial_models(candidates, text)
+        tried = True
+        if stats is not None:
+            scorer = next(s for n, s, _l in candidates if n == model)
+            use_lock = next(l for n, _s, l in candidates if n == model)
+    if stats is None and not tried:
+        with use_lock:
+            stats = scorer.detect(text)
     if stats is None:                         # too short to score at all
-        stats = verdict.placeholder_stats(engine.config, engine.device)
+        stats = verdict.placeholder_stats(scorer.config, scorer.device)
     with store.file_errors(history.HISTORY_PATH, "write to"):
         extra = _history_extra(submission)
-        extra.setdefault("model", getattr(engine, "model_name", ""))
+        if tried:
+            extra["model"] = winner_model(model, stats)
+        else:
+            extra.setdefault("model", model or "")
         run_id = history.append_history(stats, source="submission",
                                         filename="data/" + submission["text_path"],
                                         extra=extra, text=text)
     key_id = (stats.get("watermark") or {}).get("key_id") or ""
     try:
         review = reviews.record_detection(submission, stats, run_id,
-                                          engine.config.get("model_id", ""), key_id, detected_by)
+                                          scorer.config.get("model_id", ""), key_id, detected_by)
         audit.record(detected_by, "scored", submission["submission_id"],
                      "{}, z {:.2f}".format(stats.get("label", ""), stats.get("z_score", 0.0)))
         return review
@@ -107,7 +154,8 @@ def drafted_with(submission):
     return (side.get("generation") or {}).get("key_id")
 
 
-def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event=None, pick=None):
+def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event=None, pick=None,
+                candidates=None):
     """Score several submissions; the same loop shape as experiment.run_batch.
 
     cancel_event is checked before each one; on_progress(done, total,
@@ -118,7 +166,9 @@ def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event
 
     pick(submission) -> (engine, lock), when given, chooses the scorer for
     each submission (the classroom scores a draft with the key it was made
-    with, which may be a retired one).
+    with, which may be a retired one). `candidates` [(model name, scorer,
+    lock)] is tried for submissions with no known provenance, so a typed
+    or uploaded text names the model whose key matched, if any.
 
     Returns {"written": [reviews], "skipped": [(submission, reason)],
     "stopped": reason or None}."""
@@ -130,7 +180,8 @@ def detect_many(engine, lock, items, detected_by, on_progress=None, cancel_event
         review = None
         use, use_lock = pick(submission) if pick else (engine, lock)
         try:
-            review = detect_submission(use, use_lock, submission, detected_by)
+            review = detect_submission(use, use_lock, submission, detected_by,
+                                       candidates=candidates)
         except submissions.MissingText as exc:
             result["skipped"].append((submission, str(exc)))
         except store.FileProblem as exc:

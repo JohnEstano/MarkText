@@ -144,7 +144,8 @@ if request and request["assignment_id"] == assignment_id:
                 bar.progress(done / total, text="{}/{}  {}: {}".format(
                     done, total, common.md(common.display_name(submission["username"])), outcome))
             run = detection.detect_many(engine, lock, todo, teacher, on_progress=progress,
-                                        pick=common.scorer_for)
+                                        pick=common.scorer_for,
+                                        candidates=common.all_scorers())
             scored = len(run["written"])
             for submission, reason in run["skipped"]:
                 st.warning("{}: {}".format(common.md(common.display_name(submission["username"])),

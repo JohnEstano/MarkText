@@ -201,7 +201,7 @@ def test_assistant_switch_hides_the_card(new_app, school, tmp_path):
     at = sign_in(new_app(), "alice", "studentpass")
     ok(at.switch_page("app_pages/student_assignment.py").run())
     assert "Your answer" in subheaders(at)
-    assert "Draft with the assistant" not in subheaders(at)
+    assert "Ask AI" not in subheaders(at)
     assert aid
 
 
@@ -209,7 +209,7 @@ def test_assistant_draft_fills_the_editor_and_is_recorded(new_app, school):
     aid = school["assignment"]["assignment_id"]
     at = sign_in(new_app(), "alice", "studentpass")
     ok(at.switch_page("app_pages/student_assignment.py").run())
-    assert "Draft with the assistant" in subheaders(at)
+    assert "Ask AI" in subheaders(at)
     ok(at.button(key="assistant_go").click().run())
     ok(at.button(key="draft_use").click().run())
     assert at.text_area(key="editor_" + aid).value.startswith("wm wm")
@@ -218,7 +218,18 @@ def test_assistant_draft_fills_the_editor_and_is_recorded(new_app, school):
     assert sub["source"] == "assistant"
     side = submissions.sidecar(sub)
     assert side["generation"]["mode"] == "watermarked"
+    assert side["generation"]["model"] == cfg.load_config()["default_model"]
     assert str(cfg.load_config()["watermark"]["hashing_key"]) not in json.dumps(side)
+
+
+def test_ask_ai_chips_fill_the_prompt(new_app, school):
+    aid = school["assignment"]["assignment_id"]
+    at = sign_in(new_app(), "alice", "studentpass")
+    ok(at.switch_page("app_pages/student_assignment.py").run())
+    ok(at.button(key="ask_give_" + aid).click().run())
+    assert at.text_area(key="assistant_prompt_" + aid).value.startswith("Give me ideas")
+    ok(at.button(key="ask_make_" + aid).click().run())
+    assert at.text_area(key="assistant_prompt_" + aid).value.startswith("Make an outline")
 
 
 def test_sign_out_and_role_boundaries(new_app, school):

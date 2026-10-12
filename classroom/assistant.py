@@ -62,6 +62,7 @@ def generation_record(info, prompt):
             "text": info.get("text", ""),
             "seed": info.get("seed"),
             "mode": info.get("mode"),
+            "model": info.get("model"),
             "model_id": info.get("model_id"),
             "max_new_tokens": info.get("max_new_tokens"),
             "new_tokens": info.get("new_tokens"),

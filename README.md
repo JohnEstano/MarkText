@@ -32,7 +32,7 @@ It runs on an ordinary laptop with no GPU and no cloud service.
 **Student**
 - Register, join classes with a code, see open assignments and returned work
 - Write in the editor or upload a `.txt` file; every hand-in is a new version and none is overwritten
-- **Draft with the assistant** (can be switched off): a watermarked first draft, recorded with its seed in the submission's sidecar
+- **Ask AI** (can be switched off): quick requests ("Help me write", "Explain simply", "Give me ideas", "Make an outline") plus a free prompt and a model picker; the watermarked draft is recorded with its seed and model in the submission's sidecar
 - The teacher's decision, note and points after the work is returned (the detector's numbers stay on the teacher's side); a decision the teacher changes afterwards shows only when it is returned again
 
 **Lab** (teacher only): Generate (normal or watermarked, save as TXT + JSON sidecar), Detect (any text), History (a dashboard over every detection), Experiment (true- and false-positive rates over many prompts).
@@ -97,13 +97,13 @@ The hashing key is a shared secret: whoever holds it can verify the watermark an
 
 The key never leaves the config file: generation results, sidecars, reports and the About page show only the public parameters (`config.public_watermark`) and a **key id**, a random label stored beside the key and regenerated with it. A review records the key id it was scored with, so the review page can say when a submission was scored under an older key. The key id is random on purpose: any hash of a 31-bit key could be reversed by trying every value.
 
-If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one and keeps the old one under `watermark.retired_keys`. An assistant draft is always scored with the key its sidecar names, so drafts made before the rotation are still recognised; texts typed or uploaded by people are scored with the current key.
+If the key may have leaked, `python -m classroom.cli rotate-key` makes a new one and keeps the old one under `watermark.retired_keys`. An assistant draft is always scored with the model and key its sidecar names, so drafts made before the rotation are still recognised; texts typed or uploaded by people are tried against every model's key, so a draft from any model is recognised and named.
 
 ## Models
 
 Generation can pick from several open models, not just one: Qwen2.5 0.5B and 1.5B, SmolLM2 135M, 360M and 1.7B, and TinyLlama 1.1B Chat (all Apache-2.0, none gated). Nothing downloads until it is chosen — each model loads (and fetches from Hugging Face) only on first use, which is why the first generation with a new model takes a while and later ones start fast.
 
-Every model watermarks with its own private key (`models.<name>.watermark` in the config), so a score names the model that made a text: the Generate page shows it under each output, Detect names the model it scored with, and every history row records it in its `model` column alongside the analyzed text itself (`content`). Scoring needs only a model's tokenizer (megabytes), never its weights, so Detect can check against a model that was never loaded for writing. Batches (`python experiment.py --model smol360 ...`, or the model picker on the Experiment page) record their model in the batch settings and in every row, and `classroom.cli rotate-key --model <name>` rotates one model's key without touching the others.
+Every model watermarks with its own private key (`models.<name>.watermark` in the config), so a score names the model that made a text. Detection tries every model's key automatically and reports the winner: the Generate page shows the model under each output, Detect shows the best match plus every model's z-score, and every history row records the winning model in its `model` column alongside the analyzed text itself (`content`). A text matching no key names no model. Scoring needs only a model's tokenizer (megabytes), never its weights, so Detect can check against a model that was never loaded for writing. Batches (`python experiment.py --model smol360 ...`, or the model picker on the Experiment page) record their model in the batch settings and in every row, and `classroom.cli rotate-key --model <name>` rotates one model's key without touching the others.
 
 ## Files
 

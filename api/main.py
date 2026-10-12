@@ -33,8 +33,28 @@ BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 GENERATED_DIR = BASE_DIR / "generated"
 README_PATH = BASE_DIR / "README.md"
 
-state = {"engine": None, "engines": {}, "lock": threading.Lock(), "config": None,
+def make_scorer_for(config, name):
+    """One model's scorer (tokenizer only, no weights). Tests replace
+    state["scorer_factory"] with a fake."""
+    from scorer import Scorer
+    return Scorer(cfg.config_for_model(config, name))
+
+
+state = {"engine": None, "engines": {}, "scorer_factory": make_scorer_for, "scorers": {},
+         "lock": threading.Lock(), "config": None,
          "notes": [], "job": BatchJob(), "load_error": None}
+
+
+def scorers_for_all():
+    """[(model name, scorer, lock)] for every catalog model, each built on
+    first use. Tokenizers only: no weights download."""
+    config = state["config"] or cfg.load_config()
+    out = []
+    for name in cfg.model_names(config):
+        if name not in state["scorers"]:
+            state["scorers"][name] = state["scorer_factory"](config, name)
+        out.append((name, state["scorers"][name], state["lock"]))
+    return out
 
 
 def principal():
@@ -168,22 +188,34 @@ def save_generation(req: schemas.SaveRequest, who=Depends(principal)):
 # ---------------------------------------------------------------- detect
 @app.post("/detect")
 def detect(req: schemas.DetectRequest, who=Depends(principal)):
-    engine = engine_for_model(req.model)
+    from classroom import detection as scoring
+    config = state["config"] or cfg.load_config()
     text = req.text.strip()
-    with state["lock"]:
-        stats = engine.detect(text)
+    if req.model is not None:
+        if req.model not in config.get("models", {}):
+            raise HTTPException(422, "Unknown model {!r}; choose one of: {}".format(
+                req.model, ", ".join(cfg.model_names(config))))
+        if req.model not in state["scorers"]:
+            state["scorers"][req.model] = state["scorer_factory"](config, req.model)
+        candidates = [(req.model, state["scorers"][req.model], state["lock"])]
+    else:
+        candidates = scorers_for_all()
+    winner, stats, scores = scoring.trial_models(candidates, text)
     if stats is None:
         raise HTTPException(422, "Text is too short for analysis. Need at least {} tokens."
-                            .format(engine.min_tokens))
+                            .format(candidates[0][1].min_tokens))
+    model = scoring.winner_model(winner, stats)
     logged, log_error = None, None
     try:
         extra = dict(req.extra)
-        extra.setdefault("model", getattr(engine, "model_name", ""))
+        extra["model"] = model
         logged = history.append_history(stats, source=req.source, filename=req.filename,
                                         extra=extra, text=text)
     except OSError as exc:
         log_error = str(exc)
-    return {**stats, "run_id": logged, "log_error": log_error}
+    return {**stats, "model": model,
+            "scores": [{"model": n, "z": z, "label": label} for n, z, label in scores],
+            "run_id": logged, "log_error": log_error}
 
 
 # --------------------------------------------------------------- history

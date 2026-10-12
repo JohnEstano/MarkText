@@ -29,4 +29,5 @@ def test_generation_record_has_no_key():
     info = assistant.draft(eng, threading.Lock(), "Write about diaries", 100)
     record = assistant.generation_record(info, "Write about diaries")
     assert record["key_id"] == "0a1b2c3d" and record["seed"] == 42 and record["mode"] == "watermarked"
+    assert record["model"] == eng.model_name
     assert "424242" not in json.dumps(record)

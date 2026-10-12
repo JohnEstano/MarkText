@@ -131,6 +131,12 @@ def on_upload():
     offer(text, "upload", common.md(uploaded.name), upload_name=uploaded.name)
 
 
+def fill_prompt(template, aid):
+    """A quick-action chip: put its request into the Ask AI box. Runs as the
+    chip's callback, the only moment a widget's value may be set."""
+    state["assistant_prompt_" + aid] = template
+
+
 def use_draft():
     draft = state.get("assistant_draft") or {}
     if draft.get("assignment_id") == assignment_id:
@@ -321,12 +327,23 @@ with write_col:
         common.error_here("hand_in")
 
 with help_col:
-    # ---- the assistant: the whole block goes away when the switch is off
+    # ---- Ask AI: the whole block goes away when the switch is off
     if assistant.enabled(config):
         with st.container(border=True):
-            st.subheader("Draft with the assistant", icon=":material/auto_awesome:", anchor=False)
-            st.caption("The assistant writes a first draft for you. Its drafts are watermarked: "
-                       "your teacher can tell that the text came from the assistant.")
+            st.subheader("Ask AI", icon=":material/auto_awesome:", anchor=False)
+            st.caption("Drafts are watermarked: your teacher can tell that a text came from "
+                       "the assistant, and which model wrote it.")
+            chips = [("Help me write", "Help me write about: {}"),
+                     ("Explain simply", "Explain {} in simple words."),
+                     ("Give me ideas", "Give me ideas and angles for: {}"),
+                     ("Make an outline", "Make an outline for an essay about: {}")]
+            with st.container(horizontal=True):
+                for chip, template in chips:
+                    st.button(chip, type="tertiary",
+                              key="ask_{}_{}".format(chip.split()[0].lower(), assignment_id),
+                              on_click=fill_prompt,
+                              args=(template.format(task["title"]), assignment_id),
+                              help="Fill the box below with this request.")
             with st.form("assistant_" + assignment_id, border=False):
                 prompt = st.text_area("What should it write?", value=task["title"], height=90,
                                       key="assistant_prompt_" + assignment_id)
@@ -336,12 +353,13 @@ with help_col:
                 length = st.select_slider("Length", options=lengths, value=min(250, limit),
                                           format_func=lambda t: "about {} words".format(assistant.words_for(t)),
                                           key="assistant_length_" + assignment_id)
+                ask_model = common.pick_model(config, key="assistant_model_" + assignment_id)
                 ask = st.form_submit_button("Write a draft", icon=":material/auto_awesome:",
                                             key="assistant_go")
             if ask and common.job_running("assistant_job"):
                 st.info("The assistant is still writing your last draft.", icon=":material/hourglass_top:")
             elif ask:
-                engine, lock = common.engine()
+                engine, lock = common.engine(ask_model)
                 words, seconds = assistant.words_for(length), length / 4.3
                 # one model for everyone: a draft already being written goes first
                 waiting = lock.locked()

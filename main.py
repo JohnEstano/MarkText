@@ -100,6 +100,7 @@ class App(tk.Tk):
         # all cross-thread state exists from the start; one engine per
         # model, each downloading only when first chosen
         self.engines = {}
+        self.scorers = {}                    # tokenizer-only scorers for Analyze
         self.engine = None                   # the engine of the current tab's model
         self.load_state = "loading"          # loading | ready | failed
         self.load_error = ""
@@ -245,14 +246,9 @@ class App(tk.Tk):
         self.analyze_btn = ttk.Button(bf, text="Analyze", command=self._analyze)
         self.analyze_btn.pack(side="left", padx=4)
         ttk.Button(bf, text="Clear", command=self._clear_detect).pack(side="left", padx=4)
-        ttk.Label(bf, text="Model:").pack(side="left", padx=(12, 4))
-        self.det_model_var = tk.StringVar(value=self.model_labels[self.model_default])
-        self.det_model_box = ttk.Combobox(bf, textvariable=self.det_model_var,
-                                          values=[self.model_labels[n] for n in self.model_names],
-                                          state="readonly", width=34)
-        self.det_model_box.pack(side="left")
-        self.det_model_box.bind("<<ComboboxSelected>>", self._on_det_model)
         self.det_source_var = tk.StringVar(value="")
+        ttk.Label(bf, text="Analyze checks every model's key and names the winner.",
+                  foreground="#555").pack(side="left", padx=12)
         ttk.Label(bf, textvariable=self.det_source_var,
                   foreground="#555").pack(side="left", padx=12)
 
@@ -378,8 +374,14 @@ class App(tk.Tk):
     def _on_gen_model(self, _event=None):
         self._load_engine_async(self._model_name_of(self.gen_model_var))
 
-    def _on_det_model(self, _event=None):
-        self._load_engine_async(self._model_name_of(self.det_model_var))
+    def _scorer_for(self, name):
+        """One model's scorer, built on first use. Scoring needs only the
+        tokenizer, never the weights, so Analyze works without downloading
+        any model for writing."""
+        if name not in self.scorers:
+            from scorer import Scorer
+            self.scorers[name] = Scorer(cfg.config_for_model(self.settings, name))
+        return self.scorers[name]
 
     def _load_engine_async(self, name=None):
         name = name or self.model_default
@@ -585,20 +587,26 @@ class App(tk.Tk):
         if not text:
             messagebox.showerror("Empty Input", "Paste or open text to analyze.")
             return
-        name = self._model_name_of(self.det_model_var)
-        if not self._engine_ready(name):
-            return
 
-        engine = self.engines[name]
         self.analyze_btn.configure(state="disabled")
-        self.set_status("Analyzing with {}...".format(self.model_labels[name]))
-        t = threading.Thread(target=self._det_worker, args=(engine, text,), daemon=True)
+        self.set_status("Checking every model's key...")
+        t = threading.Thread(target=self._det_worker, args=(text,), daemon=True)
         t.start()
-        self.after(200, self._poll_detect, t, text, engine)
+        self.after(200, self._poll_detect, t, text)
 
-    def _det_worker(self, engine, text):
+    def _det_worker(self, text):
         try:
-            self.det_result = engine.detect(text)
+            best, table = None, []
+            for name in self.model_names:
+                stats = self._scorer_for(name).detect(text)
+                if stats is None:
+                    continue
+                table.append((name, stats["z_score"], stats["label"]))
+                if best is None or stats["z_score"] > best[1]["z_score"]:
+                    best = (name, stats)
+            self.det_result = best[1] if best else None
+            self.det_winner = best[0] if best else ""
+            self.det_table = table
             self.det_too_short = self.det_result is None
             self.det_error = ""
         except Exception as exc:
@@ -606,9 +614,9 @@ class App(tk.Tk):
             self.det_too_short = False
             self.det_error = str(exc)
 
-    def _poll_detect(self, t, text, engine):
+    def _poll_detect(self, t, text):
         if t.is_alive():
-            self.after(200, self._poll_detect, t, text, engine)
+            self.after(200, self._poll_detect, t, text)
             return
         self.analyze_btn.configure(state="normal")
 
@@ -619,7 +627,8 @@ class App(tk.Tk):
         if self.det_too_short:
             messagebox.showerror("Too Short",
                                  "Text is too short for analysis. Need at least "
-                                 "{} tokens (a sentence or two).".format(engine.min_tokens))
+                                 "{} tokens (a sentence or two).".format(
+                                     self._scorer_for(self.model_default).min_tokens))
             self.set_status("Text too short")
             return
 
@@ -629,19 +638,18 @@ class App(tk.Tk):
         self.det_vars["signal"].set("{:.1f}%".format(stats["green_fraction"] * 100.0))
         self.det_vars["zscore"].set("{:.2f}".format(stats["z_score"]))
         self.det_vars["pvalue"].set("{:.2e}".format(stats["p_value"]))
-        self.det_result_var.set(stats["label"])
+        model = self.det_winner if stats["label"] in (LABEL_LIKELY, LABEL_POSSIBLE) else ""
+        self.det_result_var.set(stats["label"] + (" ({})".format(model) if model else ""))
         self.det_result_lbl.configure(foreground=LABEL_COLORS.get(stats["label"], "#000000"))
 
         # the file name applies only while the box still holds that file's text
         unchanged = self.detect_filename and text == self.detect_loaded_text
-        extra = {"model": getattr(engine, "model_name", "")}
+        extra = {"model": model}
         if unchanged and self.detect_sidecar:
             side = self.detect_sidecar
             extra.update(mode=side.get("mode", ""), seed=side.get("seed", ""),
                          max_new_tokens=side.get("max_new_tokens", ""),
                          gen_tokens=side.get("new_tokens", ""))
-            if side.get("model"):
-                extra["model"] = side["model"]
         try:
             history.append_history(stats,
                                    source="file" if unchanged else "manual",

@@ -137,6 +137,15 @@ def scorer(model=None):
     return sc, lock
 
 
+def all_scorers():
+    """[(model name, scorer, lock)] for every catalog model, each built on
+    first use. Scoring needs only tokenizers, so trying every model's key
+    is cheap: no weights load. Detection pages trial all of these and name
+    the winner."""
+    config = cfg.load_config()
+    return [(name, *scorer(name)) for name in cfg.model_names(config)]
+
+
 @st.cache_resource(show_spinner="Loading the tokenizer...")
 def get_model_scorer(model, key_id, fingerprint):
     """A scorer for one model's key (see config.rotate_key): key_id None

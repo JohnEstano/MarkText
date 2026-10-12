@@ -51,6 +51,8 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(history, "EXPORT_DIR", tmp_path / "logs" / "exports")
     monkeypatch.setattr(experiment, "EXPORT_DIR", tmp_path / "logs" / "exports")
     monkeypatch.setattr(api_main, "GENERATED_DIR", tmp_path / "generated")
+    api_main.state["scorer_factory"] = lambda config, name: FakeEngine(config)
+    api_main.state["scorers"] = {}
     pf = tmp_path / "prompts.txt"
     pf.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
     monkeypatch.setattr(experiment, "PROMPT_FILE", pf)

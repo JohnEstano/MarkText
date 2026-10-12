@@ -1,14 +1,16 @@
-"""Lab: score any text against this installation's key and log the result
-to logs/detection_history.csv."""
+"""Lab: score any text against every model's key and log the result
+to logs/detection_history.csv. The winner (highest z-score) names the
+model that made the text, when any key matched."""
 
+import pandas as pd
 import streamlit as st
 
 import history
+from classroom import detection
 from ui import common, lab
 
 common.require_role("teacher")
 state = st.session_state
-config = common.load_config()
 
 
 def forget_result():
@@ -16,8 +18,7 @@ def forget_result():
     state["detect_stats"] = None
 
 st.title("Detect", anchor=False)
-st.caption("Score a text against one model's key. Every score is logged.")
-model = common.pick_model(config)
+st.caption("Score a text against every model's key. Every score is logged with the winning model.")
 col_in, col_out = st.columns([3, 2], gap="large")
 
 with col_in:
@@ -36,19 +37,20 @@ if analyze:
     if not text:
         col_in.error("Paste or open a text first.", icon=":material/error:")
     else:
-        engine, lock = common.scorer(model)     # the tokenizer is enough; no weights
         try:
-            with st.spinner("Scoring..."):
-                with lock:
-                    stats = engine.detect(text)
+            with st.spinner("Checking every model's key..."):
+                # scorers need only tokenizers: no weights load
+                winner, stats, scores = detection.trial_models(common.all_scorers(), text)
         except Exception as exc:
             col_in.error("Detection failed: {}".format(exc), icon=":material/error:")
         else:
             if stats is None:
-                col_in.warning("The text is too short to score. It needs at least {} tokens.".format(
-                    engine.min_tokens), icon=":material/hourglass_empty:")
+                col_in.warning("The text is too short to score.",
+                               icon=":material/hourglass_empty:")
             else:
-                state["detect_stats"] = dict(stats, scored_text=text)
+                state["detect_stats"] = dict(stats, scored_text=text, scored_model=winner,
+                                             scored_table=scores)
+                model = detection.winner_model(winner, stats)
                 unchanged = state["detect_filename"] and text == state["detect_loaded"]
                 try:
                     history.append_history(stats, source="file" if unchanged else "manual",
@@ -67,9 +69,13 @@ with col_out:
             st.caption("Nothing scored yet.")
         else:
             common.verdict_badge(stats["label"])
-            st.caption("Scored with model {} (key {}). Pick another model above when the text "
-                       "was made elsewhere.".format(stats.get("model", "?"),
-                                                    (stats.get("watermark") or {}).get("key_id", "?")))
+            st.caption("Best match: model {} (key {}).".format(stats.get("scored_model", "?"),
+                                                                (stats.get("watermark") or {}).get(
+                                                                    "key_id", "?")))
+            with st.expander("All models"):
+                st.dataframe(pd.DataFrame(stats.get("scored_table", []),
+                                          columns=["model", "z-score", "verdict"]),
+                             hide_index=True)
             with st.container(horizontal=True):
                 st.metric("Tokens scored", stats["num_tokens_scored"], border=True)
                 st.metric("Green tokens", stats["num_green_tokens"], border=True)
